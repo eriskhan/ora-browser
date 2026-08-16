@@ -23,6 +23,7 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         let webConfiguration = WKWebViewConfiguration()
         webConfiguration.applicationNameForUserAgent = configuration.userAgent
         webConfiguration.websiteDataStore = profile.dataStore
+        webConfiguration.webExtensionController = profile.extensionController
         webConfiguration.allowsAirPlayForMediaPlayback = configuration.allowsAirPlayForMediaPlayback
         webConfiguration.preferences.setValue(
             configuration.allowsInspectableDebugging,
@@ -88,6 +89,10 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
     }
 
     var contentView: NSView {
+        webView
+    }
+
+    var webExtensionWebView: WKWebView {
         webView
     }
 

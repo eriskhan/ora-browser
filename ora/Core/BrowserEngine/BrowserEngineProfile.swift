@@ -5,14 +5,26 @@ final class BrowserEngineProfile {
     let identifier: UUID
     let isPrivate: Bool
     let dataStore: WKWebsiteDataStore
+    let extensionController: WKWebExtensionController?
 
     init(identifier: UUID, isPrivate: Bool) {
         self.identifier = identifier
         self.isPrivate = isPrivate
+
         if isPrivate {
             dataStore = WKWebsiteDataStore.nonPersistent()
+            extensionController = nil
         } else {
             dataStore = WKWebsiteDataStore(forIdentifier: identifier)
+
+            let configuration = WKWebExtensionController.Configuration(identifier: identifier)
+            configuration.defaultWebsiteDataStore = dataStore
+            let controller = WKWebExtensionController(configuration: configuration)
+            extensionController = controller
+
+            Task { @MainActor in
+                await WebExtensionManager.shared.attach(controller: controller, spaceID: identifier)
+            }
         }
     }
 
