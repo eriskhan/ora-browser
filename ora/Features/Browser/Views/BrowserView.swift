@@ -118,6 +118,9 @@ struct BrowserView: View {
             }
         }
         .onChange(of: tabManager.activeTab) { oldTab, newTab in
+            if !privacyMode.isPrivate {
+                WebExtensionPermissionPrompter.shared.activeTabDidChange(from: oldTab, to: newTab)
+            }
             if showFloatingSidebar {
                 oldTab?.evaluateJavaScript(Self.removeShieldJS)
                 injectSidebarMouseShield(visible: true)
@@ -134,6 +137,9 @@ struct BrowserView: View {
             }
         }
         .onAppear {
+            if !privacyMode.isPrivate {
+                WebExtensionPermissionPrompter.shared.register(tabManager: tabManager)
+            }
             if let tab = tabManager.activeTab, !tab.isWebViewReady {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     tab.restoreTransientState(
@@ -143,6 +149,11 @@ struct BrowserView: View {
                         isPrivate: privacyMode.isPrivate
                     )
                 }
+            }
+        }
+        .onDisappear {
+            if !privacyMode.isPrivate {
+                WebExtensionPermissionPrompter.shared.unregister(tabManager: tabManager)
             }
         }
     }

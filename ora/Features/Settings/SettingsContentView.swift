@@ -4,6 +4,7 @@ import SwiftUI
 enum SettingsTab: String, Hashable, CaseIterable {
     case general
     case spaces
+    case extensions
     case passwords
     case shortcuts
     case searchEngines
@@ -12,6 +13,7 @@ enum SettingsTab: String, Hashable, CaseIterable {
         switch self {
         case .general: return "General"
         case .spaces: return "Spaces"
+        case .extensions: return "Extensions"
         case .passwords: return "Passwords"
         case .shortcuts: return "Shortcuts"
         case .searchEngines: return "Search"
@@ -22,6 +24,7 @@ enum SettingsTab: String, Hashable, CaseIterable {
         switch self {
         case .general: return "gearshape"
         case .spaces: return "rectangle.3.group"
+        case .extensions: return "puzzlepiece.extension"
         case .passwords: return "key.horizontal"
         case .shortcuts: return "command"
         case .searchEngines: return "magnifyingglass"
@@ -34,6 +37,8 @@ enum SettingsTab: String, Hashable, CaseIterable {
             return "Browser defaults, app behavior, and software updates."
         case .spaces:
             return "Space-specific defaults and per-space data controls."
+        case .extensions:
+            return "Install and control Chrome-compatible WebExtensions for each space."
         case .passwords:
             return "Password manager integration, vault access, and autofill behavior."
         case .shortcuts:
@@ -90,6 +95,8 @@ struct SettingsContentView: View {
             GeneralSettingsView()
         case .spaces:
             SpacesSettingsView()
+        case .extensions:
+            ExtensionsSettingsView()
         case .passwords:
             PasswordsSettingsView()
         case .shortcuts:

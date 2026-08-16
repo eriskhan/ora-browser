@@ -1,7 +1,10 @@
 import AppKit
 import SwiftUI
+@preconcurrency import WebKit
 
 struct URLBarMenuButton: View {
+    @EnvironmentObject private var tabManager: TabManager
+
     let foregroundColor: Color
     let onShare: (NSView, NSRect) -> Void
 
@@ -44,10 +47,15 @@ struct URLBarMenuButton: View {
         guard let sourceView = menuSourceView else { return }
 
         let menu = NSMenu()
+        addExtensionItems(to: menu, sourceView: sourceView)
+
+        if !menu.items.isEmpty {
+            menu.addItem(.separator())
+        }
 
         let shareItem = NSMenuItem(
             title: "Share link",
-            action: #selector(MenuActions.shareAction(_:)),
+            action: #selector(MenuActions.performAction(_:)),
             keyEquivalent: ""
         )
         let delegate = MenuActions { [sourceView] in
@@ -55,11 +63,57 @@ struct URLBarMenuButton: View {
             onShare(sourceView, rect)
         }
         shareItem.target = delegate
-        shareItem.representedObject = delegate // prevent deallocation
+        shareItem.representedObject = delegate
         menu.addItem(shareItem)
 
         let point = NSPoint(x: 0, y: sourceView.bounds.height + 4)
         menu.popUp(positioning: nil, at: point, in: sourceView)
+    }
+
+    private func addExtensionItems(to menu: NSMenu, sourceView: NSView) {
+        guard let activeTab = tabManager.activeTab, !activeTab.isPrivate else { return }
+
+        let tabAdapter = OraWebExtensionTabCache.shared.adapter(for: activeTab)
+        let loadedExtensions = WebExtensionManager.shared.loadedExtensions(in: activeTab.container.id)
+        let actionEntries = loadedExtensions.compactMap { entry -> (
+            InstalledWebExtension,
+            WKWebExtensionContext,
+            WKWebExtension.Action
+        )? in
+            let (installedExtension, context) = entry
+            guard let action = context.action(for: tabAdapter) else { return nil }
+            return (installedExtension, context, action)
+        }
+
+        guard !actionEntries.isEmpty else { return }
+
+        let extensionsItem = NSMenuItem(title: "Extensions", action: nil, keyEquivalent: "")
+        let extensionsMenu = NSMenu(title: "Extensions")
+
+        for (installedExtension, context, action) in actionEntries {
+            let label = action.label.isEmpty ? installedExtension.name : action.label
+            let item = NSMenuItem(
+                title: label,
+                action: #selector(MenuActions.performAction(_:)),
+                keyEquivalent: ""
+            )
+            item.isEnabled = action.isEnabled
+            item.image = action.icon(for: CGSize(width: 16, height: 16))
+
+            let delegate = MenuActions { [sourceView] in
+                WebExtensionPermissionPrompter.shared.performAction(
+                    for: context,
+                    tab: tabAdapter,
+                    sourceView: sourceView
+                )
+            }
+            item.target = delegate
+            item.representedObject = delegate
+            extensionsMenu.addItem(item)
+        }
+
+        extensionsItem.submenu = extensionsMenu
+        menu.addItem(extensionsItem)
     }
 }
 
@@ -70,7 +124,7 @@ private class MenuActions: NSObject {
         self.handler = handler
     }
 
-    @objc func shareAction(_ sender: Any?) {
+    @objc func performAction(_ sender: Any?) {
         handler()
     }
 }
