@@ -12,6 +12,7 @@ final class OraChromeExtensionAPIHost {
         case unsupportedMethod(String, String)
         case unavailableOnMacOS(String)
         case requiresChromiumProtocol(String)
+        case eventResponseTimedOut(String, String)
 
         var errorDescription: String? {
             switch self {
@@ -29,6 +30,8 @@ final class OraChromeExtensionAPIHost {
                 return "chrome.\(namespace) is platform-specific and has no faithful Ora/macOS implementation."
             case let .requiresChromiumProtocol(namespace):
                 return "chrome.\(namespace) depends on Chromium-specific protocols that WebKit does not expose."
+            case let .eventResponseTimedOut(namespace, event):
+                return "The extension did not respond to chrome.\(namespace).\(event) before the timeout."
             }
         }
 
@@ -41,6 +44,7 @@ final class OraChromeExtensionAPIHost {
             case .unsupportedMethod: "ORA_UNSUPPORTED_EXTENSION_METHOD"
             case .unavailableOnMacOS: "ORA_PLATFORM_API_UNAVAILABLE"
             case .requiresChromiumProtocol: "ORA_CHROMIUM_PROTOCOL_REQUIRED"
+            case .eventResponseTimedOut: "ORA_EXTENSION_EVENT_TIMEOUT"
             }
         }
     }
@@ -101,10 +105,16 @@ final class OraChromeExtensionAPIHost {
         let runtimeIdentifier: String
     }
 
+    private struct PendingEventResponse {
+        let continuation: CheckedContinuation<Any?, Error>
+        let timeoutTask: Task<Void, Never>
+    }
+
     static let shared = OraChromeExtensionAPIHost()
     static let applicationIdentifier = OraChromeAPIBridgeScript.applicationIdentifier
 
     var eventPorts: [ObjectIdentifier: ConnectedPort] = [:]
+    private var pendingEventResponses: [String: PendingEventResponse] = [:]
     var downloads: [Int: BridgeDownload] = [:]
     var nextDownloadID = 1
     var idleDetectionInterval: TimeInterval = 60
@@ -176,6 +186,11 @@ final class OraChromeExtensionAPIHost {
             spaceID: spaceID,
             runtimeIdentifier: runtimeIdentifier
         )
+        port.messageHandler = { [weak self] message, error in
+            Task { @MainActor in
+                self?.handlePortMessage(message, error: error)
+            }
+        }
         port.disconnectHandler = { [weak self] _ in
             Task { @MainActor in
                 self?.eventPorts[identifier] = nil
@@ -189,7 +204,8 @@ final class OraChromeExtensionAPIHost {
         namespace: String,
         event: String,
         args: [Any],
-        spaceID: UUID? = nil
+        spaceID: UUID? = nil,
+        runtimeIdentifier: String? = nil
     ) {
         let message: [String: Any] = [
             "kind": "event",
@@ -197,8 +213,60 @@ final class OraChromeExtensionAPIHost {
             "event": event,
             "args": args
         ]
-        for connected in eventPorts.values where spaceID == nil || connected.spaceID == spaceID {
+        for connected in eventPorts.values where
+            (spaceID == nil || connected.spaceID == spaceID) &&
+            (runtimeIdentifier == nil || connected.runtimeIdentifier == runtimeIdentifier)
+        {
             connected.port.sendMessage(message, completionHandler: nil)
+        }
+    }
+
+    func requestEvent(
+        namespace: String,
+        event: String,
+        args: [Any],
+        spaceID: UUID? = nil,
+        runtimeIdentifier: String? = nil,
+        timeout: TimeInterval = 8
+    ) async throws -> Any? {
+        let matchingPorts = eventPorts.values.filter { connected in
+            (spaceID == nil || connected.spaceID == spaceID) &&
+                (runtimeIdentifier == nil || connected.runtimeIdentifier == runtimeIdentifier) &&
+                !connected.port.isDisconnected
+        }
+        guard let connected = matchingPorts.first else {
+            return nil
+        }
+
+        let requestID = UUID().uuidString
+        return try await withCheckedThrowingContinuation { continuation in
+            let timeoutTask = Task { @MainActor [weak self] in
+                let nanoseconds = UInt64(max(timeout, 0.1) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                guard !Task.isCancelled else { return }
+                self?.completeEventResponse(
+                    requestID: requestID,
+                    result: .failure(BridgeError.eventResponseTimedOut(namespace, event))
+                )
+            }
+            pendingEventResponses[requestID] = PendingEventResponse(
+                continuation: continuation,
+                timeoutTask: timeoutTask
+            )
+
+            connected.port.sendMessage([
+                "kind": "event",
+                "namespace": namespace,
+                "event": event,
+                "args": args,
+                "requestId": requestID,
+                "expectsResponse": true
+            ]) { [weak self] error in
+                guard let error else { return }
+                Task { @MainActor in
+                    self?.completeEventResponse(requestID: requestID, result: .failure(error))
+                }
+            }
         }
     }
 
@@ -222,6 +290,48 @@ final class OraChromeExtensionAPIHost {
     func stringArgument(_ args: [Any], at index: Int) -> String? {
         guard args.indices.contains(index) else { return nil }
         return args[index] as? String
+    }
+
+    private func handlePortMessage(_ message: Any?, error: (any Error)?) {
+        if let error {
+            return
+        }
+        guard let payload = message as? [String: Any],
+              payload["kind"] as? String == "eventResponse",
+              let requestID = payload["requestId"] as? String
+        else {
+            return
+        }
+
+        if let errorPayload = payload["error"] as? [String: Any],
+           let message = errorPayload["message"] as? String,
+           !message.isEmpty
+        {
+            completeEventResponse(
+                requestID: requestID,
+                result: .failure(NSError(
+                    domain: "Ora.WebExtension.EventResponse",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: message]
+                ))
+            )
+            return
+        }
+
+        let value = payload["result"]
+        completeEventResponse(
+            requestID: requestID,
+            result: .success(value is NSNull ? nil : value)
+        )
+    }
+
+    private func completeEventResponse(
+        requestID: String,
+        result: Result<Any?, Error>
+    ) {
+        guard let pending = pendingEventResponses.removeValue(forKey: requestID) else { return }
+        pending.timeoutTask.cancel()
+        pending.continuation.resume(with: result)
     }
 
     private func dispatch(

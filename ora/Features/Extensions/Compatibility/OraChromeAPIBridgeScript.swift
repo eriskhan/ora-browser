@@ -37,6 +37,22 @@ enum OraChromeAPIBridgeScript {
         return chromeRoot.runtime || browserRoot.runtime;
     }
 
+    function reviveBridgeValue(value) {
+        if (value && typeof value === "object" && value.__oraBlobBase64 && value.__oraBlobType) {
+            const binary = atob(value.__oraBlobBase64);
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; ++index) bytes[index] = binary.charCodeAt(index);
+            return new Blob([bytes], { type: value.__oraBlobType });
+        }
+        if (Array.isArray(value)) return value.map(reviveBridgeValue);
+        if (value && typeof value === "object") {
+            const result = {};
+            for (const [key, nested] of Object.entries(value)) result[key] = reviveBridgeValue(nested);
+            return result;
+        }
+        return value;
+    }
+
     function normalizeResponse(response) {
         if (!response || response.ok !== true) {
             const detail = response && response.error ? response.error : {};
@@ -44,7 +60,7 @@ enum OraChromeAPIBridgeScript {
             error.code = detail.code || "ORA_EXTENSION_API_ERROR";
             throw error;
         }
-        return response.result;
+        return reviveBridgeValue(response.result);
     }
 
     function sendNative(request) {
@@ -131,6 +147,58 @@ enum OraChromeAPIBridgeScript {
         return promise;
     }
 
+    function postEventResponse(requestId, result, error) {
+        if (!eventPort || !requestId) return;
+        try {
+            eventPort.postMessage({
+                kind: "eventResponse",
+                requestId,
+                result: result === undefined ? null : result,
+                error: error ? { message: error && error.message ? error.message : String(error) } : null
+            });
+        } catch (postError) {
+            console.error("[Ora Extensions] unable to post event response", postError);
+        }
+    }
+
+    function dispatchBridgeEvent(message) {
+        const key = `${message.namespace}.${message.event}`;
+        const listeners = eventListeners.get(key);
+        const args = Array.isArray(message.args) ? message.args : [];
+
+        if (!listeners || listeners.size === 0) {
+            if (message.expectsResponse) postEventResponse(message.requestId, null, null);
+            return;
+        }
+
+        let settled = false;
+        const respond = (value) => {
+            if (settled) return;
+            settled = true;
+            postEventResponse(message.requestId, value, null);
+        };
+        const reject = (error) => {
+            if (settled) return;
+            settled = true;
+            postEventResponse(message.requestId, null, error);
+        };
+
+        for (const listener of Array.from(listeners)) {
+            try {
+                const listenerArgs = message.expectsResponse ? [...args, respond] : args;
+                const returned = listener(...listenerArgs);
+                if (message.expectsResponse && returned && typeof returned.then === "function") {
+                    returned.then(respond, reject);
+                } else if (message.expectsResponse && returned !== undefined && returned !== true) {
+                    respond(returned);
+                }
+            } catch (error) {
+                if (message.expectsResponse) reject(error);
+                else console.error("[Ora Extensions] event listener failed", error);
+            }
+        }
+    }
+
     function ensureEventPort() {
         if (eventPort) return;
         const runtime = runtimeObject();
@@ -139,13 +207,7 @@ enum OraChromeAPIBridgeScript {
             eventPort = runtime.connectNative(HOST);
             eventPort.onMessage.addListener((message) => {
                 if (!message || message.kind !== "event") return;
-                const key = `${message.namespace}.${message.event}`;
-                const listeners = eventListeners.get(key);
-                if (!listeners) return;
-                for (const listener of Array.from(listeners)) {
-                    try { listener(...(Array.isArray(message.args) ? message.args : [])); }
-                    catch (error) { console.error("[Ora Extensions] event listener failed", error); }
-                }
+                dispatchBridgeEvent(message);
             });
             eventPort.onDisconnect.addListener(() => { eventPort = null; });
         } catch (error) {
