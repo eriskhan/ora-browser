@@ -293,9 +293,7 @@ final class OraChromeExtensionAPIHost {
     }
 
     private func handlePortMessage(_ message: Any?, error: (any Error)?) {
-        if let error {
-            return
-        }
+        if error != nil { return }
         guard let payload = message as? [String: Any],
               payload["kind"] as? String == "eventResponse",
               let requestID = payload["requestId"] as? String
@@ -376,6 +374,8 @@ final class OraChromeExtensionAPIHost {
             return try handleIdle(method: method, args: args)
         case "management":
             return try await handleManagement(method: method, args: args, spaceID: spaceID, context: extensionContext)
+        case "pageCapture":
+            return try await handlePageCapture(method: method, args: args, spaceID: spaceID)
         case "power":
             return try handlePower(method: method, args: args)
         case "processes":
