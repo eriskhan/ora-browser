@@ -5,11 +5,11 @@ enum OraChromeAPIBridgeScript {
     static let fileName = "__ora_chrome_api_bridge.js"
 
     static var source: String {
-        let namespaces = (try? JSONSerialization.data(withJSONObject: ChromeExtensionAPICatalog.bridgeNamespaceNames))
+        let namespaces = (try? JSONSerialization.data(withJSONObject: ChromeExtensionAPICatalog.allNamespaceNames))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
 
         return template
-            .replacingOccurrences(of: "__ORA_BRIDGE_NAMESPACES__", with: namespaces)
+            .replacingOccurrences(of: "__ORA_EXTENSION_NAMESPACES__", with: namespaces)
             .replacingOccurrences(of: "__ORA_NATIVE_HOST__", with: applicationIdentifier)
     }
 
@@ -19,12 +19,23 @@ enum OraChromeAPIBridgeScript {
     globalThis.__oraChromeBridgeInstalled = true;
 
     const HOST = "__ORA_NATIVE_HOST__";
-    const BRIDGE_NAMESPACES = __ORA_BRIDGE_NAMESPACES__;
+    const EXTENSION_NAMESPACES = __ORA_EXTENSION_NAMESPACES__;
     const chromeRoot = globalThis.chrome || (globalThis.chrome = {});
     const browserRoot = globalThis.browser || (globalThis.browser = {});
-    const runtime = chromeRoot.runtime || browserRoot.runtime;
+    const nativeTabsAPI = chromeRoot.tabs || browserRoot.tabs;
     const eventListeners = new Map();
     let eventPort = null;
+    let bridgeLastError = null;
+
+    const STATIC_VALUES = {
+        tabs: { TAB_ID_NONE: -1 },
+        tabGroups: { TAB_GROUP_ID_NONE: -1 },
+        windows: { WINDOW_ID_NONE: -1, WINDOW_ID_CURRENT: -2 }
+    };
+
+    function runtimeObject() {
+        return chromeRoot.runtime || browserRoot.runtime;
+    }
 
     function normalizeResponse(response) {
         if (!response || response.ok !== true) {
@@ -37,6 +48,7 @@ enum OraChromeAPIBridgeScript {
     }
 
     function sendNative(request) {
+        const runtime = runtimeObject();
         if (!runtime || typeof runtime.sendNativeMessage !== "function") {
             return Promise.reject(new Error("Ora native extension bridge is unavailable"));
         }
@@ -64,17 +76,54 @@ enum OraChromeAPIBridgeScript {
         });
     }
 
+    async function tabMetadata(tabId) {
+        if (tabId == null || !nativeTabsAPI || typeof nativeTabsAPI.get !== "function") return null;
+        try {
+            const tab = await nativeTabsAPI.get(tabId);
+            if (!tab) return null;
+            return {
+                id: tab.id,
+                index: tab.index,
+                windowId: tab.windowId,
+                active: tab.active,
+                pinned: tab.pinned,
+                url: tab.url,
+                pendingUrl: tab.pendingUrl,
+                title: tab.title
+            };
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    async function prepareArgs(namespace, method, suppliedArgs) {
+        const args = Array.from(suppliedArgs);
+        if (namespace === "pageCapture" && method === "saveAsMHTML" && args[0] && typeof args[0] === "object") {
+            const details = { ...args[0] };
+            details.__oraTab = await tabMetadata(details.tabId);
+            args[0] = details;
+        }
+        if (namespace === "tabCapture" && method === "getMediaStreamId" && args[0] && typeof args[0] === "object") {
+            const options = { ...args[0] };
+            options.__oraTab = await tabMetadata(options.targetTabId);
+            args[0] = options;
+        }
+        return args;
+    }
+
     function invoke(namespace, method, suppliedArgs) {
         const args = Array.from(suppliedArgs);
         const callback = typeof args[args.length - 1] === "function" ? args.pop() : null;
-        const promise = sendNative({ kind: "call", namespace, method, args });
+        const promise = prepareArgs(namespace, method, args)
+            .then((preparedArgs) => sendNative({ kind: "call", namespace, method, args: preparedArgs }));
 
         if (callback) {
             promise.then(
                 (result) => callback(result),
                 (error) => {
-                    console.error(`[Ora Extensions] ${namespace}.${method} failed`, error);
-                    callback(undefined);
+                    bridgeLastError = { message: error && error.message ? error.message : String(error) };
+                    try { callback(undefined); }
+                    finally { bridgeLastError = null; }
                 }
             );
             return undefined;
@@ -83,7 +132,9 @@ enum OraChromeAPIBridgeScript {
     }
 
     function ensureEventPort() {
-        if (eventPort || !runtime || typeof runtime.connectNative !== "function") return;
+        if (eventPort) return;
+        const runtime = runtimeObject();
+        if (!runtime || typeof runtime.connectNative !== "function") return;
         try {
             eventPort = runtime.connectNative(HOST);
             eventPort.onMessage.addListener((message) => {
@@ -121,12 +172,24 @@ enum OraChromeAPIBridgeScript {
         };
     }
 
-    function makeNamespace(namespace) {
+    function makeNamespace(namespace, existing = {}) {
         const events = new Map();
-        return new Proxy({}, {
-            get(_target, property) {
+        return new Proxy(existing || {}, {
+            get(target, property, receiver) {
                 if (property === "then") return undefined;
-                if (typeof property !== "string") return undefined;
+                if (namespace === "runtime" && property === "lastError" && bridgeLastError) return bridgeLastError;
+                if (typeof property !== "string") return Reflect.get(target, property, receiver);
+
+                const staticValue = STATIC_VALUES[namespace] && STATIC_VALUES[namespace][property];
+                if (staticValue !== undefined) return staticValue;
+
+                let nativeValue;
+                try { nativeValue = Reflect.get(target, property, receiver); }
+                catch (_error) { nativeValue = undefined; }
+                if (nativeValue !== undefined && nativeValue !== null) {
+                    return typeof nativeValue === "function" ? nativeValue.bind(target) : nativeValue;
+                }
+
                 if (/^on[A-Z]/.test(property)) {
                     if (!events.has(property)) events.set(property, makeEvent(namespace, property));
                     return events.get(property);
@@ -161,12 +224,18 @@ enum OraChromeAPIBridgeScript {
         });
     }
 
-    function makePrivacyNamespace() {
-        return {
-            network: makeSettingsNamespace("privacy.network"),
-            services: makeSettingsNamespace("privacy.services"),
-            websites: makeSettingsNamespace("privacy.websites")
-        };
+    function makePrivacyNamespace(existing) {
+        const value = existing || {};
+        if (!value.network) value.network = makeSettingsNamespace("privacy.network");
+        if (!value.services) value.services = makeSettingsNamespace("privacy.services");
+        if (!value.websites) value.websites = makeSettingsNamespace("privacy.websites");
+        return value;
+    }
+
+    function makeProxyNamespace(existing) {
+        const value = existing || {};
+        if (!value.settings) value.settings = makeSetting("proxy", "settings");
+        return makeNamespace("proxy", value);
     }
 
     function installPath(root, path, valueFactory) {
@@ -178,15 +247,30 @@ enum OraChromeAPIBridgeScript {
             object = object[component];
         }
         const leaf = components[components.length - 1];
-        if (object[leaf] == null) object[leaf] = valueFactory();
+        const existing = object[leaf];
+        const replacement = valueFactory(existing);
+        if (replacement === existing) return;
+
+        try { object[leaf] = replacement; } catch (_error) {}
+        if (object[leaf] !== replacement) {
+            try {
+                Object.defineProperty(object, leaf, {
+                    value: replacement,
+                    configurable: true,
+                    enumerable: true
+                });
+            } catch (_error) {}
+        }
     }
 
-    for (const namespace of BRIDGE_NAMESPACES) {
-        let factory = () => makeNamespace(namespace);
+    for (const namespace of EXTENSION_NAMESPACES) {
+        let factory = (existing) => makeNamespace(namespace, existing || {});
         if (namespace === "accessibilityFeatures" || namespace === "contentSettings") {
-            factory = () => makeSettingsNamespace(namespace);
+            factory = (existing) => existing || makeSettingsNamespace(namespace);
         } else if (namespace === "privacy") {
             factory = makePrivacyNamespace;
+        } else if (namespace === "proxy") {
+            factory = makeProxyNamespace;
         }
         installPath(chromeRoot, namespace, factory);
         installPath(browserRoot, namespace, factory);

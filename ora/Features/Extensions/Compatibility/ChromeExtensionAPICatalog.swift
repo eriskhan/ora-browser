@@ -22,10 +22,9 @@ enum ChromeExtensionAPICatalog {
         ]
 
         let unavailableOnMacOS: Set<String> = [
-            "audio", "certificateProvider", "documentScan", "enterprise.deviceAttributes", "enterprise.hardwarePlatform",
-            "enterprise.login", "enterprise.networkingAttributes", "enterprise.platformKeys", "fileBrowserHandler",
-            "fileSystemProvider", "input.ime", "loginState", "platformKeys", "printerProvider", "printingMetrics",
-            "vpnProvider", "wallpaper"
+            "audio", "certificateProvider", "documentScan", "enterprise.deviceAttributes", "enterprise.login",
+            "enterprise.networkingAttributes", "enterprise.platformKeys", "fileBrowserHandler", "fileSystemProvider", "input.ime",
+            "loginState", "platformKeys", "printing", "printingMetrics", "vpnProvider", "wallpaper"
         ]
 
         let requiresChromiumProtocol: Set<String> = ["debugger"]
@@ -60,6 +59,8 @@ enum ChromeExtensionAPICatalog {
             return ChromeExtensionAPINamespace(name: name, support: support)
         }
     }()
+
+    static let allNamespaceNames: [String] = namespaces.map(\.name)
 
     static let bridgeNamespaceNames: [String] = namespaces
         .filter { $0.support != .webKitNative }

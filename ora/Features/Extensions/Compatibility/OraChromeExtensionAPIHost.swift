@@ -26,7 +26,7 @@ final class OraChromeExtensionAPIHost {
             case let .unsupportedMethod(namespace, method):
                 return "Ora does not yet implement chrome.\(namespace).\(method)."
             case let .unavailableOnMacOS(namespace):
-                return "chrome.\(namespace) is a ChromeOS-specific API and has no faithful macOS equivalent."
+                return "chrome.\(namespace) is platform-specific and has no faithful Ora/macOS implementation."
             case let .requiresChromiumProtocol(namespace):
                 return "chrome.\(namespace) depends on Chromium-specific protocols that WebKit does not expose."
             }
@@ -243,16 +243,25 @@ final class OraChromeExtensionAPIHost {
         if namespace.hasPrefix("privacy.") {
             return try handlePrivacySetting(namespace: namespace, method: method, args: args)
         }
+        if namespace == "proxy.settings" {
+            return try handleProxySetting(method: method, args: args, spaceID: spaceID)
+        }
 
         switch namespace {
         case "browsingData":
             return try await handleBrowsingData(method: method, args: args, spaceID: spaceID)
+        case "dns":
+            return try handleDNS(method: method, args: args)
         case "downloads":
             return try await handleDownloads(method: method, args: args, spaceID: spaceID)
+        case "enterprise.hardwarePlatform":
+            return try handleEnterpriseHardwarePlatform(method: method)
         case "fontSettings":
             return try handleFontSettings(method: method, args: args)
         case "history":
             return try handleHistory(method: method, args: args, spaceID: spaceID)
+        case "identity":
+            return try await handleIdentity(method: method, args: args, context: extensionContext)
         case "idle":
             return try handleIdle(method: method, args: args)
         case "management":
@@ -290,9 +299,7 @@ final class OraChromeExtensionAPIHost {
                 throw BridgeError.unavailableOnMacOS(namespace)
             case .requiresChromiumProtocol:
                 throw BridgeError.requiresChromiumProtocol(namespace)
-            case .oraNativeBridge:
-                throw BridgeError.unsupportedMethod(namespace, method)
-            case .webKitNative:
+            case .oraNativeBridge, .webKitNative:
                 throw BridgeError.unsupportedMethod(namespace, method)
             }
         }
