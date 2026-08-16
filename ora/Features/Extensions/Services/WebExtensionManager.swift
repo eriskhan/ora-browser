@@ -44,6 +44,7 @@ final class WebExtensionManager: ObservableObject {
         }
 
         controllers[spaceID] = controller
+        controller.delegate = WebExtensionPermissionPrompter.shared
         for installedExtension in installedExtensions where installedExtension.isEnabled(in: spaceID) {
             do {
                 try await load(installedExtension, in: spaceID, controller: controller)
@@ -152,6 +153,40 @@ final class WebExtensionManager: ObservableObject {
         }
     }
 
+    func recordGrantedPermissions(
+        _ permissions: Set<WKWebExtension.Permission>,
+        for context: WKWebExtensionContext
+    ) {
+        guard let key = contextKey(for: context),
+              let index = installedExtensions.firstIndex(where: { $0.id == key.extensionID })
+        else {
+            return
+        }
+
+        let spaceKey = key.spaceID.uuidString
+        var stored = installedExtensions[index].grantedPermissionsBySpace[spaceKey] ?? []
+        stored.formUnion(permissions.map(\.rawValue))
+        installedExtensions[index].grantedPermissionsBySpace[spaceKey] = stored
+        persistRegistry()
+    }
+
+    func recordGrantedMatchPatterns(
+        _ matchPatterns: Set<WKWebExtension.MatchPattern>,
+        for context: WKWebExtensionContext
+    ) {
+        guard let key = contextKey(for: context),
+              let index = installedExtensions.firstIndex(where: { $0.id == key.extensionID })
+        else {
+            return
+        }
+
+        let spaceKey = key.spaceID.uuidString
+        var stored = installedExtensions[index].grantedMatchPatternsBySpace[spaceKey] ?? []
+        stored.formUnion(matchPatterns.map(\.string))
+        installedExtensions[index].grantedMatchPatternsBySpace[spaceKey] = stored
+        persistRegistry()
+    }
+
     private func registerInstalledExtension(
         installID: UUID,
         resourceURL: URL,
@@ -173,8 +208,7 @@ final class WebExtensionManager: ObservableObject {
             manifestVersion: extensionObject.manifestVersion,
             resourceRelativePath: relativePath,
             source: source,
-            installedAt: Date(),
-            disabledSpaceIDs: []
+            installedAt: Date()
         )
 
         extensionObjects[installID] = extensionObject
@@ -204,12 +238,61 @@ final class WebExtensionManager: ObservableObject {
         }
 
         let extensionObject = try await extensionObject(for: installedExtension)
+        authorizeInitialAccessIfNeeded(for: installedExtension.id, webExtension: extensionObject, spaceID: spaceID)
+
+        guard let currentExtension = installedExtensions.first(where: { $0.id == installedExtension.id }) else {
+            throw ManagerError.extensionNotFound
+        }
+
         let context = WKWebExtensionContext(for: extensionObject)
-        context.uniqueIdentifier = installedExtension.runtimeIdentifier
+        context.uniqueIdentifier = currentExtension.runtimeIdentifier
         context.isInspectable = true
+        restorePermissions(for: currentExtension, spaceID: spaceID, into: context)
         try controller.load(context)
         contexts[key] = context
-        loadErrors[installedExtension.id] = nil
+        loadErrors[currentExtension.id] = nil
+    }
+
+    private func authorizeInitialAccessIfNeeded(
+        for extensionID: UUID,
+        webExtension: WKWebExtension,
+        spaceID: UUID
+    ) {
+        guard let index = installedExtensions.firstIndex(where: { $0.id == extensionID }) else { return }
+        let spaceKey = spaceID.uuidString
+        guard !installedExtensions[index].permissionDecisionSpaceIDs.contains(spaceKey) else { return }
+
+        let decision = WebExtensionPermissionPrompter.shared.requestInitialAccess(for: webExtension)
+        installedExtensions[index].permissionDecisionSpaceIDs.insert(spaceKey)
+        installedExtensions[index].grantedPermissionsBySpace[spaceKey] = Set(decision.permissions.map(\.rawValue))
+        installedExtensions[index].grantedMatchPatternsBySpace[spaceKey] = Set(decision.matchPatterns.map(\.string))
+        persistRegistry()
+    }
+
+    private func restorePermissions(
+        for installedExtension: InstalledWebExtension,
+        spaceID: UUID,
+        into context: WKWebExtensionContext
+    ) {
+        let spaceKey = spaceID.uuidString
+        let permissionValues = installedExtension.grantedPermissionsBySpace[spaceKey] ?? []
+        context.grantedPermissions = Dictionary(
+            uniqueKeysWithValues: permissionValues.map {
+                (WKWebExtension.Permission(rawValue: $0), Date.distantFuture)
+            }
+        )
+
+        var patterns: [WKWebExtension.MatchPattern: Date] = [:]
+        for rawPattern in installedExtension.grantedMatchPatternsBySpace[spaceKey] ?? [] {
+            if let pattern = try? WKWebExtension.MatchPattern(string: rawPattern) {
+                patterns[pattern] = .distantFuture
+            }
+        }
+        context.grantedPermissionMatchPatterns = patterns
+    }
+
+    private func contextKey(for context: WKWebExtensionContext) -> ContextKey? {
+        contexts.first(where: { $0.value === context })?.key
     }
 
     private func extensionObject(for installedExtension: InstalledWebExtension) async throws -> WKWebExtension {
