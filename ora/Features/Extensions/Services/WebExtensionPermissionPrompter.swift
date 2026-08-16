@@ -11,6 +11,8 @@ final class WebExtensionPermissionPrompter: NSObject, WKWebExtensionControllerDe
         let matchPatterns: Set<WKWebExtension.MatchPattern>
     }
 
+    private var popupAnchor: (view: NSView, rect: NSRect)?
+
     func requestInitialAccess(for webExtension: WKWebExtension) -> InitialAccessDecision {
         let permissions = webExtension.requestedPermissions
         let matchPatterns = webExtension.requestedPermissionMatchPatterns
@@ -27,6 +29,20 @@ final class WebExtensionPermissionPrompter: NSObject, WKWebExtensionControllerDe
             permissions: allowed ? permissions : [],
             matchPatterns: allowed ? matchPatterns : []
         )
+    }
+
+    func performAction(
+        for context: WKWebExtensionContext,
+        tab: OraWebExtensionTab,
+        sourceView: NSView
+    ) {
+        popupAnchor = (sourceView, sourceView.bounds)
+        context.userGesturePerformed(in: tab)
+        let presentsPopup = context.action(for: tab)?.presentsPopup ?? false
+        context.performAction(for: tab)
+        if !presentsPopup {
+            popupAnchor = nil
+        }
     }
 
     func webExtensionController(
@@ -82,6 +98,38 @@ final class WebExtensionPermissionPrompter: NSObject, WKWebExtensionControllerDe
             message: "Requests access to:\n\n\(displayURLs)"
         )
         completionHandler(allowed ? urls : [], nil)
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        presentActionPopup action: WKWebExtension.Action,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let popover = action.popupPopover else {
+            completionHandler(nil)
+            return
+        }
+
+        let anchor = popupAnchor ?? fallbackPopupAnchor()
+        popupAnchor = nil
+        guard let anchor else {
+            completionHandler(NSError(
+                domain: "Ora.WebExtension",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "No browser window is available to present the extension popup."]
+            ))
+            return
+        }
+
+        popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: .minY)
+        completionHandler(nil)
+    }
+
+    private func fallbackPopupAnchor() -> (view: NSView, rect: NSRect)? {
+        guard let view = NSApp.keyWindow?.contentView else { return nil }
+        let rect = NSRect(x: view.bounds.maxX - 32, y: view.bounds.maxY - 32, width: 24, height: 24)
+        return (view, rect)
     }
 
     private func showPrompt(extensionName: String, message: String) -> Bool {
