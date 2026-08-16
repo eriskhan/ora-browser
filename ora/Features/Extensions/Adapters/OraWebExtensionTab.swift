@@ -10,6 +10,20 @@ final class OraWebExtensionTab: NSObject, WKWebExtensionTab {
         super.init()
     }
 
+    func window(for context: WKWebExtensionContext) -> (any WKWebExtensionWindow)? {
+        guard let tab, let tabManager = tab.tabManager else { return nil }
+        return WebExtensionPermissionPrompter.shared.windowAdapter(
+            for: tabManager,
+            spaceID: tab.container.id
+        )
+    }
+
+    func indexInWindow(for context: WKWebExtensionContext) -> Int {
+        guard let tab else { return NSNotFound }
+        let orderedTabs = tab.container.tabs.sorted { $0.order < $1.order }
+        return orderedTabs.firstIndex(where: { $0.id == tab.id }) ?? NSNotFound
+    }
+
     func webView(for context: WKWebExtensionContext) -> WKWebView? {
         tab?.browserPage?.webExtensionWebView
     }
@@ -22,6 +36,22 @@ final class OraWebExtensionTab: NSObject, WKWebExtensionTab {
         tab?.type == .pinned
     }
 
+    func setPinned(
+        _ pinned: Bool,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let tabManager = tab.tabManager else {
+            completionHandler(nil)
+            return
+        }
+
+        if pinned != (tab.type == .pinned) {
+            tabManager.togglePinTab(tab)
+        }
+        completionHandler(nil)
+    }
+
     func isPlayingAudio(for context: WKWebExtensionContext) -> Bool {
         tab?.isPlayingMedia ?? false
     }
@@ -32,6 +62,53 @@ final class OraWebExtensionTab: NSObject, WKWebExtensionTab {
 
     func isLoadingComplete(for context: WKWebExtensionContext) -> Bool {
         !(tab?.isLoading ?? false)
+    }
+
+    func activate(
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let tabManager = tab.tabManager else {
+            completionHandler(nil)
+            return
+        }
+        tabManager.activateTab(tab)
+        completionHandler(nil)
+    }
+
+    func loadURL(
+        _ url: URL,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        if url.scheme == context.baseURL.scheme, url.host == context.baseURL.host {
+            completionHandler(NSError(
+                domain: "Ora.WebExtension",
+                code: 4,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Extension pages in normal Ora tabs are not supported yet."
+                ]
+            ))
+            return
+        }
+
+        tab?.loadURL(url.absoluteString)
+        completionHandler(nil)
+    }
+
+    func close(
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let tabManager = tab.tabManager else {
+            completionHandler(nil)
+            return
+        }
+
+        context.webExtensionController?.didCloseTab(self, windowIsClosing: false)
+        tabManager.closeTab(tab: tab)
+        OraWebExtensionTabCache.shared.remove(tabID: tab.id)
+        completionHandler(nil)
     }
 }
 

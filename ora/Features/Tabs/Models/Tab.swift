@@ -230,6 +230,14 @@ class Tab: ObservableObject, Identifiable {
         self.isWebViewReady = false
         self.setupBrowserPageDelegate(for: page)
         self.syncBackgroundColorFromHex()
+
+        if !isPrivate, let controller = profile.extensionController {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                WebExtensionPermissionPrompter.shared.tabDidBecomeAvailable(self, controller: controller)
+            }
+        }
+
         // Load after a short delay to ensure layout
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
             let url = if self.type != .normal { self.savedURL } else { self.url }

@@ -75,11 +75,12 @@ struct URLBarMenuButton: View {
 
         let tabAdapter = OraWebExtensionTabCache.shared.adapter(for: activeTab)
         let loadedExtensions = WebExtensionManager.shared.loadedExtensions(in: activeTab.container.id)
-        let actionEntries = loadedExtensions.compactMap { installedExtension, context -> (
+        let actionEntries = loadedExtensions.compactMap { entry -> (
             InstalledWebExtension,
             WKWebExtensionContext,
             WKWebExtension.Action
         )? in
+            let (installedExtension, context) = entry
             guard let action = context.action(for: tabAdapter) else { return nil }
             return (installedExtension, context, action)
         }
