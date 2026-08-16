@@ -61,14 +61,19 @@ final class WebExtensionManager: ObservableObject {
         let installID = UUID()
         let installDirectory = try makeInstallDirectory(for: installID)
         let archiveURL = installDirectory.appendingPathComponent("extension.zip")
-        try zipData.write(to: archiveURL, options: .atomic)
 
-        return try await registerInstalledExtension(
-            installID: installID,
-            resourceURL: archiveURL,
-            source: .chromeWebStore,
-            chromeExtensionID: chromeExtensionID
-        )
+        do {
+            try zipData.write(to: archiveURL, options: .atomic)
+            return try await registerInstalledExtension(
+                installID: installID,
+                resourceURL: archiveURL,
+                source: .chromeWebStore,
+                chromeExtensionID: chromeExtensionID
+            )
+        } catch {
+            try? fileManager.removeItem(at: installDirectory)
+            throw error
+        }
     }
 
     @discardableResult
@@ -102,11 +107,12 @@ final class WebExtensionManager: ObservableObject {
             return
         }
 
-        for (key, context) in contexts where key.extensionID == extensionID {
+        let contextKeys = contexts.keys.filter { $0.extensionID == extensionID }
+        for key in contextKeys {
+            guard let context = contexts.removeValue(forKey: key) else { continue }
             if let controller = controllers[key.spaceID] {
                 try? controller.unload(context)
             }
-            contexts[key] = nil
         }
 
         extensionObjects[extensionID] = nil
@@ -337,12 +343,19 @@ final class WebExtensionManager: ObservableObject {
     }
 
     private var extensionsDirectory: URL {
-        let applicationSupport = try! fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
+        let applicationSupport: URL
+        do {
+            applicationSupport = try fileManager.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+        } catch {
+            applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? fileManager.temporaryDirectory
+        }
+
         let directory = applicationSupport
             .appendingPathComponent("Ora", isDirectory: true)
             .appendingPathComponent("Extensions", isDirectory: true)

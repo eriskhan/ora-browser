@@ -101,7 +101,6 @@ final class WebExtensionPermissionPrompter: NSObject, WKWebExtensionControllerDe
         sourceView: NSView
     ) {
         popupAnchor = (sourceView, sourceView.bounds)
-        context.userGesturePerformed(in: tab)
         let presentsPopup = context.action(for: tab)?.presentsPopup ?? false
         context.performAction(for: tab)
         if !presentsPopup {
@@ -155,7 +154,6 @@ final class WebExtensionPermissionPrompter: NSObject, WKWebExtensionControllerDe
             return
         }
 
-        let previousTab = tabManager.activeTab
         let historyManager = HistoryManager(
             modelContainer: tabManager.modelContainer,
             modelContext: tabManager.modelContext
@@ -176,11 +174,7 @@ final class WebExtensionPermissionPrompter: NSObject, WKWebExtensionControllerDe
         }
 
         let adapter = OraWebExtensionTabCache.shared.adapter(for: newTab)
-        controller.didOpenTab(adapter)
-        if configuration.shouldBeActive {
-            let previousAdapter = previousTab.map { OraWebExtensionTabCache.shared.adapter(for: $0) }
-            controller.didActivateTab(adapter, previousActiveTab: previousAdapter)
-        }
+        tabDidBecomeAvailable(newTab, controller: controller)
         completionHandler(adapter, nil)
     }
 

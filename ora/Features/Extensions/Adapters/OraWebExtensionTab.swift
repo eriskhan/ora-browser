@@ -52,6 +52,11 @@ final class OraWebExtensionTab: NSObject, WKWebExtensionTab {
         completionHandler(nil)
     }
 
+    func isSelected(for context: WKWebExtensionContext) -> Bool {
+        guard let tab else { return false }
+        return tab.tabManager?.activeTab?.id == tab.id
+    }
+
     func isPlayingAudio(for context: WKWebExtensionContext) -> Bool {
         tab?.isPlayingMedia ?? false
     }
@@ -93,6 +98,31 @@ final class OraWebExtensionTab: NSObject, WKWebExtensionTab {
         }
 
         tab?.loadURL(url.absoluteString)
+        completionHandler(nil)
+    }
+
+    func goBack(
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        tab?.goBack()
+        completionHandler(nil)
+    }
+
+    func goForward(
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        tab?.goForward()
+        completionHandler(nil)
+    }
+
+    func reload(
+        fromOrigin: Bool,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        tab?.reload()
         completionHandler(nil)
     }
 
