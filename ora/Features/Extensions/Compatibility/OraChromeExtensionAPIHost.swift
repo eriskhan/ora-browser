@@ -374,6 +374,8 @@ final class OraChromeExtensionAPIHost {
             return try handleIdle(method: method, args: args)
         case "management":
             return try await handleManagement(method: method, args: args, spaceID: spaceID, context: extensionContext)
+        case "omnibox":
+            return try WebExtensionOmniboxCoordinator.shared.handle(method: method, args: args, context: extensionContext)
         case "pageCapture":
             return try await handlePageCapture(method: method, args: args, spaceID: spaceID)
         case "power":
