@@ -39,6 +39,14 @@ final class WebExtensionPermissionPrompter: NSObject, WKWebExtensionControllerDe
         windowAdapters = windowAdapters.filter { $0.key.tabManager != identifier }
     }
 
+    func tabManager(for spaceID: UUID) -> TabManager? {
+        tabManagers = tabManagers.filter { $0.value.value != nil }
+        let candidates = tabManagers.values.compactMap(\.value).filter { manager in
+            manager.containers.contains(where: { $0.id == spaceID })
+        }
+        return candidates.first(where: { $0.activeTab?.pageWindow?.isKeyWindow == true }) ?? candidates.first
+    }
+
     func windowAdapter(for tabManager: TabManager, spaceID: UUID) -> OraWebExtensionWindow {
         let key = WindowKey(tabManager: ObjectIdentifier(tabManager), spaceID: spaceID)
         if let existing = windowAdapters[key] {
@@ -77,8 +85,11 @@ final class WebExtensionPermissionPrompter: NSObject, WKWebExtensionControllerDe
         controller.didActivateTab(newAdapter, previousActiveTab: previousAdapter)
     }
 
-    func requestInitialAccess(for webExtension: WKWebExtension) -> InitialAccessDecision {
-        let permissions = webExtension.requestedPermissions
+    func requestInitialAccess(
+        for webExtension: WKWebExtension,
+        excludingPermissions: Set<String> = []
+    ) -> InitialAccessDecision {
+        let permissions = Set(webExtension.requestedPermissions.filter { !excludingPermissions.contains($0.rawValue) })
         let matchPatterns = webExtension.requestedPermissionMatchPatterns
         guard !permissions.isEmpty || !matchPatterns.isEmpty else {
             return InitialAccessDecision(permissions: [], matchPatterns: [])
@@ -185,13 +196,20 @@ final class WebExtensionPermissionPrompter: NSObject, WKWebExtensionControllerDe
         for extensionContext: WKWebExtensionContext,
         completionHandler: @escaping (Set<WKWebExtension.Permission>, Date?) -> Void
     ) {
+        let compatibilityPermissions = WebExtensionManager.shared.installedExtension(for: extensionContext)?.compatibilityPermissions ?? []
+        let visiblePermissions = Set(permissions.filter { !compatibilityPermissions.contains($0.rawValue) })
+        if visiblePermissions.isEmpty {
+            completionHandler(permissions, nil)
+            return
+        }
+
         let allowed = showPrompt(
             extensionName: extensionContext.webExtension.displayName ?? "This extension",
-            message: "Requests additional permissions:\n\n\(permissionDescription(permissions: permissions, matchPatterns: []))"
+            message: "Requests additional permissions:\n\n\(permissionDescription(permissions: visiblePermissions, matchPatterns: []))"
         )
-        let granted = allowed ? permissions : []
+        let granted = allowed ? permissions : permissions.subtracting(visiblePermissions)
         if allowed {
-            WebExtensionManager.shared.recordGrantedPermissions(granted, for: extensionContext)
+            WebExtensionManager.shared.recordGrantedPermissions(visiblePermissions, for: extensionContext)
         }
         completionHandler(granted, nil)
     }

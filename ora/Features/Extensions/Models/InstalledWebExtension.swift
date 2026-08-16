@@ -19,6 +19,7 @@ struct InstalledWebExtension: Codable, Equatable, Identifiable {
     var permissionDecisionSpaceIDs: Set<String>
     var grantedPermissionsBySpace: [String: Set<String>]
     var grantedMatchPatternsBySpace: [String: Set<String>]
+    var compatibilityPermissions: Set<String>
 
     init(
         id: UUID,
@@ -33,7 +34,8 @@ struct InstalledWebExtension: Codable, Equatable, Identifiable {
         disabledSpaceIDs: Set<UUID> = [],
         permissionDecisionSpaceIDs: Set<String> = [],
         grantedPermissionsBySpace: [String: Set<String>] = [:],
-        grantedMatchPatternsBySpace: [String: Set<String>] = [:]
+        grantedMatchPatternsBySpace: [String: Set<String>] = [:],
+        compatibilityPermissions: Set<String> = []
     ) {
         self.id = id
         self.runtimeIdentifier = runtimeIdentifier
@@ -48,6 +50,7 @@ struct InstalledWebExtension: Codable, Equatable, Identifiable {
         self.permissionDecisionSpaceIDs = permissionDecisionSpaceIDs
         self.grantedPermissionsBySpace = grantedPermissionsBySpace
         self.grantedMatchPatternsBySpace = grantedMatchPatternsBySpace
+        self.compatibilityPermissions = compatibilityPermissions
     }
 
     func isEnabled(in spaceID: UUID) -> Bool {
@@ -68,6 +71,7 @@ struct InstalledWebExtension: Codable, Equatable, Identifiable {
         case permissionDecisionSpaceIDs
         case grantedPermissionsBySpace
         case grantedMatchPatternsBySpace
+        case compatibilityPermissions
     }
 
     init(from decoder: Decoder) throws {
@@ -91,5 +95,6 @@ struct InstalledWebExtension: Codable, Equatable, Identifiable {
             [String: Set<String>].self,
             forKey: .grantedMatchPatternsBySpace
         ) ?? [:]
+        compatibilityPermissions = try container.decodeIfPresent(Set<String>.self, forKey: .compatibilityPermissions) ?? []
     }
 }
