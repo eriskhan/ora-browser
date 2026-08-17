@@ -1,0 +1,238 @@
+import Foundation
+
+enum OraMozillaCompatibilityScript {
+    static let fileName = "__ora_mozilla_compat.js"
+
+    static var source: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        let buildID = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        return template
+            .replacingOccurrences(of: "__ORA_APP_VERSION__", with: version)
+            .replacingOccurrences(of: "__ORA_BUILD_ID__", with: buildID)
+    }
+
+    private static let template = #"""
+(() => {
+    if (globalThis.__oraMozillaCompatibilityInstalled) return;
+    globalThis.__oraMozillaCompatibilityInstalled = true;
+
+    const root = globalThis.browser || globalThis.chrome;
+    if (!root) return;
+    if (!globalThis.browser) globalThis.browser = root;
+
+    let generatedContentScriptID = 0;
+    let generatedLegacyUserScriptID = 0;
+    const registeredUserScriptIDs = new Set();
+
+    function defineIfMissing(name, value) {
+        if (root[name] !== undefined && root[name] !== null) return;
+        try {
+            Object.defineProperty(root, name, {
+                value,
+                configurable: true,
+                enumerable: true,
+                writable: false
+            });
+        } catch (_error) {
+            try { root[name] = value; } catch (_ignored) {}
+        }
+    }
+
+    function call(namespace, method, args) {
+        const value = namespace && namespace[method];
+        if (typeof value !== "function") {
+            return Promise.reject(new Error(`Ora does not support browser.${method} in this context`));
+        }
+        try {
+            return Promise.resolve(value.apply(namespace, args));
+        } catch (error) {
+            return Promise.reject(error);
+        }
+    }
+
+    if (root.action) {
+        defineIfMissing("browserAction", root.action);
+
+        if (!root.pageAction) {
+            const action = root.action;
+            defineIfMissing("pageAction", {
+                onClicked: action.onClicked,
+                setTitle: (...args) => call(action, "setTitle", args),
+                getTitle: (...args) => call(action, "getTitle", args),
+                setIcon: (...args) => call(action, "setIcon", args),
+                setPopup: (...args) => call(action, "setPopup", args),
+                getPopup: (...args) => call(action, "getPopup", args),
+                show: (tabId) => call(action, "enable", [tabId]),
+                hide: (tabId) => call(action, "disable", [tabId]),
+                openPopup: (...args) => call(action, "openPopup", args)
+            });
+        }
+    }
+
+    if (!root.menus && root.contextMenus) defineIfMissing("menus", root.contextMenus);
+
+    if (root.runtime && typeof root.runtime.getBrowserInfo !== "function") {
+        try {
+            root.runtime.getBrowserInfo = () => Promise.resolve({
+                name: "Ora",
+                vendor: "Ora Browser",
+                version: "__ORA_APP_VERSION__",
+                buildID: "__ORA_BUILD_ID__"
+            });
+        } catch (_error) {}
+    }
+
+    if (!root.clipboard && typeof navigator !== "undefined" && navigator.clipboard) {
+        defineIfMissing("clipboard", {
+            async setImageData(imageData, imageType) {
+                if (typeof ClipboardItem === "undefined" || typeof navigator.clipboard.write !== "function") {
+                    throw new Error("browser.clipboard.setImageData is unavailable in this WebKit context");
+                }
+                const normalizedType = String(imageType || "png").toLowerCase();
+                if (normalizedType !== "png" && normalizedType !== "jpeg" && normalizedType !== "jpg") {
+                    throw new TypeError("Firefox clipboard.setImageData supports png and jpeg images");
+                }
+                const mimeType = normalizedType === "png" ? "image/png" : "image/jpeg";
+                const blob = new Blob([imageData], { type: mimeType });
+                await navigator.clipboard.write([new ClipboardItem({ [mimeType]: blob })]);
+            }
+        });
+    }
+
+    function rejectUnsupportedRegistrationOptions(options, apiName) {
+        const unsupported = ["includeGlobs", "excludeGlobs", "matchAboutBlank", "cssOrigin"].filter(
+            (key) => options && options[key] !== undefined
+        );
+        if (unsupported.length) {
+            throw new Error(`${apiName} options not supported by Ora: ${unsupported.join(", ")}`);
+        }
+    }
+
+    function fileList(entries, apiName) {
+        if (!entries) return undefined;
+        return entries.map((entry) => {
+            if (typeof entry === "string") return entry;
+            if (entry && typeof entry.file === "string") return entry.file;
+            if (entry && typeof entry.code === "string") {
+                throw new Error(`${apiName} inline code cannot be registered faithfully by Ora`);
+            }
+            throw new TypeError(`${apiName} script entries must reference packaged files`);
+        });
+    }
+
+    function makeRegisteredContentScript(options, id, apiName) {
+        rejectUnsupportedRegistrationOptions(options, apiName);
+        if (!Array.isArray(options.matches) || options.matches.length === 0) {
+            throw new TypeError(`${apiName} requires a non-empty matches array in Ora`);
+        }
+        const script = {
+            id,
+            matches: options.matches,
+            persistAcrossSessions: false
+        };
+        if (options.excludeMatches) script.excludeMatches = options.excludeMatches;
+        if (options.allFrames !== undefined) script.allFrames = Boolean(options.allFrames);
+        if (options.runAt) script.runAt = options.runAt;
+        const js = fileList(options.js, apiName);
+        const css = fileList(options.css, apiName);
+        if (js && js.length) script.js = js;
+        if (css && css.length) script.css = css;
+        return script;
+    }
+
+    if (!root.contentScripts && root.scripting && typeof root.scripting.registerContentScripts === "function") {
+        defineIfMissing("contentScripts", {
+            async register(options) {
+                const id = `ora-content-${++generatedContentScriptID}`;
+                const script = makeRegisteredContentScript(options || {}, id, "browser.contentScripts.register");
+                await root.scripting.registerContentScripts([script]);
+                return {
+                    unregister: () => root.scripting.unregisterContentScripts({ ids: [id] })
+                };
+            }
+        });
+    }
+
+    function userScriptInternalID(id) {
+        return `ora-user-${id}`;
+    }
+
+    function makeModernUserScript(script) {
+        rejectUnsupportedRegistrationOptions(script, "browser.userScripts");
+        if (!script || typeof script.id !== "string" || script.id.length === 0) {
+            throw new TypeError("browser.userScripts requires a non-empty script id");
+        }
+        const converted = makeRegisteredContentScript(
+            { ...script, css: undefined },
+            userScriptInternalID(script.id),
+            "browser.userScripts"
+        );
+        if (script.world === "MAIN") converted.world = "MAIN";
+        registeredUserScriptIDs.add(script.id);
+        return converted;
+    }
+
+    function makeLegacyUserScript(options) {
+        const publicID = `legacy-${++generatedLegacyUserScriptID}`;
+        const converted = makeRegisteredContentScript(
+            {
+                ...options,
+                matches: options.matches || options.hosts,
+                js: options.js || (options.file ? [{ file: options.file }] : options.code ? [{ code: options.code }] : undefined)
+            },
+            userScriptInternalID(publicID),
+            "browser.userScripts.register"
+        );
+        registeredUserScriptIDs.add(publicID);
+        return { publicID, converted };
+    }
+
+    if (!root.userScripts && root.scripting && typeof root.scripting.registerContentScripts === "function") {
+        defineIfMissing("userScripts", {
+            async register(scripts) {
+                if (Array.isArray(scripts)) {
+                    const converted = scripts.map(makeModernUserScript);
+                    await root.scripting.registerContentScripts(converted);
+                    return undefined;
+                }
+
+                const legacy = makeLegacyUserScript(scripts || {});
+                await root.scripting.registerContentScripts([legacy.converted]);
+                return {
+                    unregister: async () => {
+                        await root.scripting.unregisterContentScripts({ ids: [userScriptInternalID(legacy.publicID)] });
+                        registeredUserScriptIDs.delete(legacy.publicID);
+                    }
+                };
+            },
+
+            async getScripts(filter = {}) {
+                const publicIDs = Array.isArray(filter.ids) ? filter.ids : Array.from(registeredUserScriptIDs);
+                if (publicIDs.length === 0) return [];
+                const scripts = await root.scripting.getRegisteredContentScripts({
+                    ids: publicIDs.map(userScriptInternalID)
+                });
+                return scripts.map((script) => ({
+                    ...script,
+                    id: script.id.replace(/^ora-user-/, ""),
+                    js: (script.js || []).map((file) => ({ file }))
+                }));
+            },
+
+            async update(scripts) {
+                if (!Array.isArray(scripts)) throw new TypeError("browser.userScripts.update expects an array");
+                const converted = scripts.map(makeModernUserScript);
+                await root.scripting.updateContentScripts(converted);
+            },
+
+            async unregister(filter = {}) {
+                const publicIDs = Array.isArray(filter.ids) ? filter.ids : Array.from(registeredUserScriptIDs);
+                if (publicIDs.length === 0) return;
+                await root.scripting.unregisterContentScripts({ ids: publicIDs.map(userScriptInternalID) });
+                for (const id of publicIDs) registeredUserScriptIDs.delete(id);
+            }
+        });
+    }
+})();
+"""#
+}
