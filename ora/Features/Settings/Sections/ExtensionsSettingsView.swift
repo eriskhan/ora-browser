@@ -48,7 +48,10 @@ struct ExtensionsSettingsView: View {
                     description: "Unsupported Firefox-only APIs stay undefined so extensions can feature-detect them safely."
                 ) {
                     HStack(spacing: 24) {
-                        compatibilityMetric(title: "Mozilla namespaces audited", value: MozillaExtensionAPICatalog.namespaces.count)
+                        compatibilityMetric(
+                            title: "Mozilla namespaces audited",
+                            value: MozillaExtensionAPICatalog.namespaces.count
+                        )
                         compatibilityMetric(title: "Native WebKit", value: nativeCount)
                         compatibilityMetric(title: "Compatibility / partial", value: compatibilityCount)
                     }
@@ -59,7 +62,9 @@ struct ExtensionsSettingsView: View {
                         ContentUnavailableView(
                             "No Extensions Installed",
                             systemImage: "puzzlepiece.extension",
-                            description: Text("Choose a Firefox XPI, ZIP archive, or unpacked WebExtension folder.")
+                            description: Text(
+                                "Choose a Firefox XPI, ZIP archive, or unpacked WebExtension folder."
+                            )
                         )
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
@@ -75,9 +80,11 @@ struct ExtensionsSettingsView: View {
                     }
                 }
 
-                Text("Extension permissions are user-approved. Private Ora windows are not exposed to extensions by default.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Extension permissions are user-approved. Private Ora windows are not exposed to extensions by default."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             .padding(24)
             .frame(maxWidth: 820, alignment: .leading)
@@ -94,7 +101,6 @@ struct ExtensionsSettingsView: View {
         }
     }
 
-    @ViewBuilder
     private func extensionRow(_ installedExtension: InstalledWebExtension) -> some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: "puzzlepiece.extension.fill")
