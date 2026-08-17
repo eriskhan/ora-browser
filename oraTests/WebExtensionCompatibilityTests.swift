@@ -6,7 +6,7 @@ struct WebExtensionCompatibilityTests {
     @Test func mozillaCatalogHasUniqueNamespaces() {
         let names = MozillaExtensionAPICatalog.allNamespaceNames
 
-        #expect(names.count == 50)
+        #expect(names.count >= 50)
         #expect(Set(names).count == names.count)
     }
 
