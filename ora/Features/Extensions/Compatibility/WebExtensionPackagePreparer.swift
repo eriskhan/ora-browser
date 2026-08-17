@@ -3,6 +3,8 @@ import ZIPFoundation
 
 struct PreparedWebExtensionPackage {
     let resourceURL: URL
+    let originalPermissions: Set<String>
+    let compatibilityRevision: Int
 }
 
 enum WebExtensionPackagePreparer {
@@ -23,6 +25,7 @@ enum WebExtensionPackagePreparer {
         }
     }
 
+    static let currentCompatibilityRevision = 1
     static let internalBridgePermission = "nativeMessaging"
     private static let bridgeWorkerFileName = "__ora_mozilla_background.js"
 
@@ -46,6 +49,45 @@ enum WebExtensionPackagePreparer {
             rootURL = try locateManifestRoot(startingAt: extractedURL)
         }
 
+        return try patchPreparedResource(at: rootURL, originalPermissions: nil)
+    }
+
+    static func refreshPreparedResource(
+        at rootURL: URL,
+        originalPermissions: Set<String>
+    ) throws -> PreparedWebExtensionPackage {
+        try patchPreparedResource(at: rootURL, originalPermissions: originalPermissions)
+    }
+
+    static func inferOriginalPermissions(at rootURL: URL) throws -> Set<String> {
+        let manifestURL = rootURL.appendingPathComponent("manifest.json")
+        guard let text = try? String(contentsOf: manifestURL, encoding: .utf8),
+              let data = removingJSONComments(from: text).data(using: .utf8),
+              let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw PreparationError.invalidManifest
+        }
+
+        var permissions = Set(manifest["permissions"] as? [String] ?? [])
+        let compatibilityURL = rootURL.appendingPathComponent(OraMozillaCompatibilityScript.fileName)
+        if FileManager.default.fileExists(atPath: compatibilityURL.path),
+           let source = try? String(contentsOf: compatibilityURL, encoding: .utf8),
+           source.contains("ORA_ORIGINAL_PERMISSIONS")
+        {
+            // Revisions that use the Ora native bridge inject nativeMessaging into
+            // the prepared manifest. Unless the generated shim explicitly recorded
+            // that it was original, do not migrate the injected permission as user intent.
+            if source.contains("const ORA_ORIGINAL_NATIVE_MESSAGING = false") {
+                permissions.remove(internalBridgePermission)
+            }
+        }
+        return permissions
+    }
+
+    private static func patchPreparedResource(
+        at rootURL: URL,
+        originalPermissions explicitOriginalPermissions: Set<String>?
+    ) throws -> PreparedWebExtensionPackage {
         let manifestURL = rootURL.appendingPathComponent("manifest.json")
         guard let text = try? String(contentsOf: manifestURL, encoding: .utf8),
               let data = removingJSONComments(from: text).data(using: .utf8),
@@ -54,9 +96,9 @@ enum WebExtensionPackagePreparer {
             throw PreparationError.invalidManifest
         }
 
-        let originalPermissions = manifest["permissions"] as? [String] ?? []
+        let originalPermissions = explicitOriginalPermissions ?? Set(manifest["permissions"] as? [String] ?? [])
         let originallyRequestedNativeMessaging = originalPermissions.contains(internalBridgePermission)
-        let encodedOriginalPermissions = jsonArrayLiteral(originalPermissions)
+        let encodedOriginalPermissions = jsonArrayLiteral(Array(originalPermissions).sorted())
         let compatibilitySource = OraMozillaCompatibilityScript.source
             .replacingOccurrences(
                 of: "__ORA_ORIGINAL_NATIVE_MESSAGING__",
@@ -80,7 +122,11 @@ enum WebExtensionPackagePreparer {
             options: [.prettyPrinted, .sortedKeys]
         )
         try updatedManifest.write(to: manifestURL, options: .atomic)
-        return PreparedWebExtensionPackage(resourceURL: rootURL)
+        return PreparedWebExtensionPackage(
+            resourceURL: rootURL,
+            originalPermissions: originalPermissions,
+            compatibilityRevision: currentCompatibilityRevision
+        )
     }
 
     private static func locateManifestRoot(startingAt directory: URL) throws -> URL {
