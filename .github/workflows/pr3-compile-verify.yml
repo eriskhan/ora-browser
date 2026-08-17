@@ -5,6 +5,9 @@ on:
     branches:
       - feat/extensions
 
+permissions:
+  contents: write
+
 jobs:
   verify:
     runs-on: macos-latest
@@ -16,6 +19,47 @@ jobs:
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
+
+      - name: Format PR3 Swift files
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install swiftformat
+          swiftformat \
+            ora/App/OraRoot.swift \
+            ora/Core/BrowserEngine/BrowserPage.swift \
+            ora/Features/Extensions/Adapters/OraWebExtensionTab.swift \
+            ora/Features/Extensions/Adapters/OraWebExtensionWindow.swift \
+            ora/Features/Extensions/Compatibility/MozillaExtensionAPICatalog.swift \
+            ora/Features/Extensions/Compatibility/WebExtensionPackagePreparer.swift \
+            ora/Features/Extensions/Models/InstalledWebExtension.swift \
+            ora/Features/Extensions/Services/ExtensionManager.swift \
+            ora/Features/Settings/Sections/ExtensionsSettingsView.swift \
+            ora/Features/Settings/SettingsContentView.swift \
+            ora/Features/Tabs/Browser/TabBrowserPageDelegate.swift \
+            ora/Features/Tabs/State/TabManager.swift \
+            oraTests/WebExtensionCompatibilityTests.swift
+
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add \
+              ora/App/OraRoot.swift \
+              ora/Core/BrowserEngine/BrowserPage.swift \
+              ora/Features/Extensions/Adapters/OraWebExtensionTab.swift \
+              ora/Features/Extensions/Adapters/OraWebExtensionWindow.swift \
+              ora/Features/Extensions/Compatibility/MozillaExtensionAPICatalog.swift \
+              ora/Features/Extensions/Compatibility/WebExtensionPackagePreparer.swift \
+              ora/Features/Extensions/Models/InstalledWebExtension.swift \
+              ora/Features/Extensions/Services/ExtensionManager.swift \
+              ora/Features/Settings/Sections/ExtensionsSettingsView.swift \
+              ora/Features/Settings/SettingsContentView.swift \
+              ora/Features/Tabs/Browser/TabBrowserPageDelegate.swift \
+              ora/Features/Tabs/State/TabManager.swift \
+              oraTests/WebExtensionCompatibilityTests.swift
+            git commit -m "Format extension implementation"
+            git push origin HEAD:feat/extensions
+          fi
 
       - name: Install XcodeGen
         run: brew install xcodegen
