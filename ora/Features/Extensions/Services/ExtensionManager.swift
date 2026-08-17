@@ -130,13 +130,21 @@ final class ExtensionManager: NSObject, ObservableObject {
                 name: extensionObject.displayName ?? "Unnamed Extension",
                 version: extensionObject.displayVersion ?? extensionObject.version ?? "Unknown",
                 manifestVersion: extensionObject.manifestVersion,
-                resourceRelativePath: relativePath
+                resourceRelativePath: relativePath,
+                originalPermissions: prepared.originalPermissions,
+                compatibilityRevision: prepared.compatibilityRevision
             )
 
-            let permissionDecision = requestInitialAccess(for: extensionObject, name: installedExtension.name)
+            let requestedPermissions = Set(extensionObject.requestedPermissions.map(\.rawValue))
+                .intersection(prepared.originalPermissions)
+            let permissionDecision = requestInitialAccess(
+                permissions: requestedPermissions,
+                matchPatterns: Set(extensionObject.requestedPermissionMatchPatterns.map(\.string)),
+                name: installedExtension.name
+            )
             installedExtension.permissionDecisionMade = true
             if permissionDecision {
-                installedExtension.grantedPermissions = Set(extensionObject.requestedPermissions.map(\.rawValue))
+                installedExtension.grantedPermissions = requestedPermissions
                 installedExtension.grantedMatchPatterns = Set(
                     extensionObject.requestedPermissionMatchPatterns.map(\.string)
                 )
@@ -238,6 +246,37 @@ final class ExtensionManager: NSObject, ObservableObject {
         tab.tabManager?.closeTab(tab: tab)
     }
 
+    func hasBridgeAccess(to permission: String, for context: WKWebExtensionContext) -> Bool {
+        guard let index = recordIndex(for: context) else { return false }
+        let installedExtension = installedExtensions[index]
+        return installedExtension.originalPermissions.contains(permission) &&
+            installedExtension.grantedPermissions.contains(permission)
+    }
+
+    func originalPermissions(for context: WKWebExtensionContext) -> Set<String> {
+        guard let index = recordIndex(for: context) else { return [] }
+        return installedExtensions[index].originalPermissions
+    }
+
+    func grantedOriginalPermissions(for context: WKWebExtensionContext) -> Set<String> {
+        guard let index = recordIndex(for: context) else { return [] }
+        return installedExtensions[index].grantedPermissions
+            .intersection(installedExtensions[index].originalPermissions)
+    }
+
+    func setBridgePermission(_ permission: String, granted: Bool, for context: WKWebExtensionContext) {
+        guard let index = recordIndex(for: context),
+              installedExtensions[index].originalPermissions.contains(permission)
+        else { return }
+
+        if granted {
+            installedExtensions[index].grantedPermissions.insert(permission)
+        } else {
+            installedExtensions[index].grantedPermissions.remove(permission)
+        }
+        persistRegistry()
+    }
+
     private func ensureTabWrapper(for tab: Tab) -> OraWebExtensionTab {
         if let existing = tabWrappers[tab.id] {
             return existing
@@ -259,28 +298,32 @@ final class ExtensionManager: NSObject, ObservableObject {
             return
         }
 
+        let currentExtension = try ensureCurrentCompatibility(for: installedExtension)
+        let resourceURL = extensionsDirectory.appendingPathComponent(currentExtension.resourceRelativePath)
         let extensionObject: WKWebExtension
-        if let cached = extensionObjects[installedExtension.id] {
+        if let cached = extensionObjects[currentExtension.id] {
             extensionObject = cached
         } else {
-            let resourceURL = extensionsDirectory.appendingPathComponent(installedExtension.resourceRelativePath)
             extensionObject = try await WKWebExtension(resourceBaseURL: resourceURL)
-            extensionObjects[installedExtension.id] = extensionObject
+            extensionObjects[currentExtension.id] = extensionObject
         }
 
         let context = WKWebExtensionContext(for: extensionObject)
-        context.uniqueIdentifier = installedExtension.runtimeIdentifier
+        context.uniqueIdentifier = currentExtension.runtimeIdentifier
         context.isInspectable = true
-        context.inspectionName = installedExtension.name
+        context.inspectionName = currentExtension.name
         context.unsupportedAPIs = MozillaExtensionAPICatalog.unsupportedAPIPaths.union(["browser.windows.create"])
+
+        var grantedPermissions = currentExtension.grantedPermissions
+        grantedPermissions.insert(WebExtensionPackagePreparer.internalBridgePermission)
         context.grantedPermissions = Dictionary(
-            uniqueKeysWithValues: installedExtension.grantedPermissions.map {
+            uniqueKeysWithValues: grantedPermissions.map {
                 (WKWebExtension.Permission(rawValue: $0), Date.distantFuture)
             }
         )
 
         var patterns: [WKWebExtension.MatchPattern: Date] = [:]
-        for rawPattern in installedExtension.grantedMatchPatterns {
+        for rawPattern in currentExtension.grantedMatchPatterns {
             if let pattern = try? WKWebExtension.MatchPattern(string: rawPattern) {
                 patterns[pattern] = .distantFuture
             }
@@ -288,8 +331,32 @@ final class ExtensionManager: NSObject, ObservableObject {
         context.grantedPermissionMatchPatterns = patterns
 
         try controller.load(context)
-        contexts[installedExtension.id] = context
-        loadErrors[installedExtension.id] = nil
+        contexts[currentExtension.id] = context
+        loadErrors[currentExtension.id] = nil
+    }
+
+    private func ensureCurrentCompatibility(for installedExtension: InstalledWebExtension) throws -> InstalledWebExtension {
+        guard installedExtension.compatibilityRevision < WebExtensionPackagePreparer.currentCompatibilityRevision else {
+            return installedExtension
+        }
+
+        guard let index = installedExtensions.firstIndex(where: { $0.id == installedExtension.id }) else {
+            throw ExtensionError.extensionNotFound
+        }
+        let resourceURL = extensionsDirectory.appendingPathComponent(installedExtension.resourceRelativePath)
+        let originalPermissions = installedExtension.originalPermissions.isEmpty
+            ? try WebExtensionPackagePreparer.inferOriginalPermissions(at: resourceURL)
+            : installedExtension.originalPermissions
+        let refreshed = try WebExtensionPackagePreparer.refreshPreparedResource(
+            at: resourceURL,
+            originalPermissions: originalPermissions
+        )
+
+        installedExtensions[index].originalPermissions = refreshed.originalPermissions
+        installedExtensions[index].compatibilityRevision = refreshed.compatibilityRevision
+        extensionObjects[installedExtension.id] = nil
+        persistRegistry()
+        return installedExtensions[index]
     }
 
     private func runtimeIdentifier(for webExtension: WKWebExtension, fallback: UUID) -> String {
@@ -310,13 +377,17 @@ final class ExtensionManager: NSObject, ObservableObject {
         return fallback.uuidString.lowercased()
     }
 
-    private func requestInitialAccess(for webExtension: WKWebExtension, name: String) -> Bool {
-        let permissions = webExtension.requestedPermissions.map(\.rawValue).sorted()
-        let hosts = webExtension.requestedPermissionMatchPatterns.map(\.string).sorted()
-        guard !permissions.isEmpty || !hosts.isEmpty else { return true }
+    private func requestInitialAccess(
+        permissions: Set<String>,
+        matchPatterns: Set<String>,
+        name: String
+    ) -> Bool {
+        let permissionNames = permissions.sorted()
+        let hosts = matchPatterns.sorted()
+        guard !permissionNames.isEmpty || !hosts.isEmpty else { return true }
 
         let details = [
-            permissions.isEmpty ? nil : "Permissions: " + permissions.joined(separator: ", "),
+            permissionNames.isEmpty ? nil : "Permissions: " + permissionNames.joined(separator: ", "),
             hosts.isEmpty ? nil : "Sites: " + hosts.joined(separator: ", ")
         ].compactMap { $0 }.joined(separator: "\n\n")
 
@@ -520,16 +591,31 @@ extension ExtensionManager: WKWebExtensionControllerDelegate {
         for extensionContext: WKWebExtensionContext,
         completionHandler: @escaping (Set<WKWebExtension.Permission>, Date?) -> Void
     ) {
-        let names = permissions.map(\.rawValue)
+        let internalPermission = WKWebExtension.Permission(
+            rawValue: WebExtensionPackagePreparer.internalBridgePermission
+        )
+        let userFacingPermissions = permissions.filter { permission in
+            permission != internalPermission || originalPermissions(for: extensionContext).contains(permission.rawValue)
+        }
+        let names = userFacingPermissions.map(\.rawValue)
+
+        if names.isEmpty {
+            completionHandler(permissions.contains(internalPermission) ? [internalPermission] : [], .distantFuture)
+            return
+        }
+
         guard requestPermissionApproval(title: "Allow Extension Permission?", details: names) else {
-            completionHandler([], nil)
+            let internalOnly: Set<WKWebExtension.Permission> = permissions.contains(internalPermission)
+                ? [internalPermission]
+                : []
+            completionHandler(internalOnly, internalOnly.isEmpty ? nil : .distantFuture)
             return
         }
         if let index = recordIndex(for: extensionContext) {
             installedExtensions[index].grantedPermissions.formUnion(names)
             persistRegistry()
         }
-        completionHandler(permissions, .distantFuture)
+        completionHandler(Set(userFacingPermissions).union([internalPermission]), .distantFuture)
     }
 
     func webExtensionController(
