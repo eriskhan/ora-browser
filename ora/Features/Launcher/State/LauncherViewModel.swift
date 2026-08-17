@@ -47,13 +47,24 @@ class LauncherViewModel: ObservableObject {
 
     func searchHandler(_ text: String) {
         guard let tabManager, let historyManager else { return }
+        let spaceID = tabManager.activeContainer?.id
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
 
-        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else {
+        guard !trimmed.isEmpty else {
+            WebExtensionOmniboxCoordinator.shared.cancelIfActive(spaceID: spaceID)
             invalidateAutoSuggestionRequests()
             suggestions = defaultSuggestions()
             focusedElement = suggestions.first?.id ?? UUID()
             return
         }
+
+        if let spaceID,
+           let omniboxMatch = WebExtensionOmniboxCoordinator.shared.match(input: text, spaceID: spaceID)
+        {
+            showOmniboxSuggestions(for: omniboxMatch, originalText: text, spaceID: spaceID)
+            return
+        }
+        WebExtensionOmniboxCoordinator.shared.cancelIfActive(spaceID: spaceID)
 
         let requestID = nextAutoSuggestionRequestID()
 
@@ -80,6 +91,7 @@ class LauncherViewModel: ObservableObject {
     }
 
     func reset() {
+        WebExtensionOmniboxCoordinator.shared.cancelIfActive(spaceID: tabManager?.activeContainer?.id)
         invalidateAutoSuggestionRequests()
         suggestions = []
         focusedElement = UUID()
@@ -118,6 +130,61 @@ class LauncherViewModel: ObservableObject {
     }
 
     // MARK: - Private Helpers
+
+    private func showOmniboxSuggestions(
+        for match: WebExtensionOmniboxCoordinator.Match,
+        originalText: String,
+        spaceID: UUID
+    ) {
+        let requestID = nextAutoSuggestionRequestID()
+        let coordinator = WebExtensionOmniboxCoordinator.shared
+        let disposition = navigateInCurrentTab ? "currentTab" : "newForegroundTab"
+
+        suggestions = [
+            LauncherSuggestion(
+                type: .suggestedQuery,
+                title: coordinator.defaultTitle(for: match),
+                name: match.installedExtension.name,
+                action: {
+                    coordinator.submit(
+                        match: match,
+                        content: match.text,
+                        disposition: disposition,
+                        spaceID: spaceID
+                    )
+                }
+            )
+        ]
+        focusedElement = suggestions[0].id
+
+        Task { [weak self] in
+            let extensionSuggestions = await coordinator.suggestions(for: match, spaceID: spaceID)
+            guard let self,
+                  requestID == self.autoSuggestionRequestID,
+                  self.currentText == originalText
+            else {
+                return
+            }
+
+            let mapped = extensionSuggestions.map { suggestion in
+                LauncherSuggestion(
+                    type: .suggestedQuery,
+                    title: suggestion.description,
+                    name: match.installedExtension.name,
+                    action: {
+                        coordinator.submit(
+                            match: match,
+                            content: suggestion.content,
+                            disposition: disposition,
+                            spaceID: spaceID
+                        )
+                    }
+                )
+            }
+            self.suggestions.append(contentsOf: mapped)
+            self.focusedElement = self.suggestions.first?.id ?? UUID()
+        }
+    }
 
     private func createAISuggestion(engineName: SearchEngineID, query: String? = nil)
         -> LauncherSuggestion

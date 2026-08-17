@@ -64,11 +64,16 @@ final class WebExtensionManager: ObservableObject {
 
         do {
             try zipData.write(to: archiveURL, options: .atomic)
+            let prepared = try WebExtensionPackagePreparer.prepare(
+                resourceURL: archiveURL,
+                installDirectory: installDirectory
+            )
             return try await registerInstalledExtension(
                 installID: installID,
-                resourceURL: archiveURL,
+                resourceURL: prepared.resourceURL,
                 source: .chromeWebStore,
-                chromeExtensionID: chromeExtensionID
+                chromeExtensionID: chromeExtensionID,
+                compatibilityPermissions: prepared.compatibilityPermissions
             )
         } catch {
             try? fileManager.removeItem(at: installDirectory)
@@ -87,14 +92,19 @@ final class WebExtensionManager: ObservableObject {
 
         let installID = UUID()
         let installDirectory = try makeInstallDirectory(for: installID)
-        let resourceURL = try copyLocalResource(sourceURL, into: installDirectory)
 
         do {
+            let copiedResourceURL = try copyLocalResource(sourceURL, into: installDirectory)
+            let prepared = try WebExtensionPackagePreparer.prepare(
+                resourceURL: copiedResourceURL,
+                installDirectory: installDirectory
+            )
             return try await registerInstalledExtension(
                 installID: installID,
-                resourceURL: resourceURL,
+                resourceURL: prepared.resourceURL,
                 source: .local,
-                chromeExtensionID: nil
+                chromeExtensionID: nil,
+                compatibilityPermissions: prepared.compatibilityPermissions
             )
         } catch {
             try? fileManager.removeItem(at: installDirectory)
@@ -150,6 +160,15 @@ final class WebExtensionManager: ObservableObject {
         contexts[ContextKey(spaceID: spaceID, extensionID: extensionID)]
     }
 
+    func spaceID(for context: WKWebExtensionContext) -> UUID? {
+        contextKey(for: context)?.spaceID
+    }
+
+    func installedExtension(for context: WKWebExtensionContext) -> InstalledWebExtension? {
+        guard let key = contextKey(for: context) else { return nil }
+        return installedExtensions.first(where: { $0.id == key.extensionID })
+    }
+
     func loadedExtensions(in spaceID: UUID) -> [(InstalledWebExtension, WKWebExtensionContext)] {
         installedExtensions.compactMap { installedExtension in
             guard let context = context(extensionID: installedExtension.id, in: spaceID) else {
@@ -172,6 +191,7 @@ final class WebExtensionManager: ObservableObject {
         let spaceKey = key.spaceID.uuidString
         var stored = installedExtensions[index].grantedPermissionsBySpace[spaceKey] ?? []
         stored.formUnion(permissions.map(\.rawValue))
+        stored.subtract(installedExtensions[index].compatibilityPermissions)
         installedExtensions[index].grantedPermissionsBySpace[spaceKey] = stored
         persistRegistry()
     }
@@ -197,7 +217,8 @@ final class WebExtensionManager: ObservableObject {
         installID: UUID,
         resourceURL: URL,
         source: InstalledWebExtension.Source,
-        chromeExtensionID: String?
+        chromeExtensionID: String?,
+        compatibilityPermissions: Set<String>
     ) async throws -> InstalledWebExtension {
         let extensionObject = try await WKWebExtension(resourceBaseURL: resourceURL)
         let runtimeIdentifier = chromeExtensionID ?? installID.uuidString.lowercased()
@@ -214,7 +235,8 @@ final class WebExtensionManager: ObservableObject {
             manifestVersion: extensionObject.manifestVersion,
             resourceRelativePath: relativePath,
             source: source,
-            installedAt: Date()
+            installedAt: Date(),
+            compatibilityPermissions: compatibilityPermissions
         )
 
         extensionObjects[installID] = extensionObject
@@ -268,7 +290,11 @@ final class WebExtensionManager: ObservableObject {
         let spaceKey = spaceID.uuidString
         guard !installedExtensions[index].permissionDecisionSpaceIDs.contains(spaceKey) else { return }
 
-        let decision = WebExtensionPermissionPrompter.shared.requestInitialAccess(for: webExtension)
+        let compatibilityPermissions = installedExtensions[index].compatibilityPermissions
+        let decision = WebExtensionPermissionPrompter.shared.requestInitialAccess(
+            for: webExtension,
+            excludingPermissions: compatibilityPermissions
+        )
         installedExtensions[index].permissionDecisionSpaceIDs.insert(spaceKey)
         installedExtensions[index].grantedPermissionsBySpace[spaceKey] = Set(decision.permissions.map(\.rawValue))
         installedExtensions[index].grantedMatchPatternsBySpace[spaceKey] = Set(decision.matchPatterns.map(\.string))
@@ -281,7 +307,8 @@ final class WebExtensionManager: ObservableObject {
         into context: WKWebExtensionContext
     ) {
         let spaceKey = spaceID.uuidString
-        let permissionValues = installedExtension.grantedPermissionsBySpace[spaceKey] ?? []
+        var permissionValues = installedExtension.grantedPermissionsBySpace[spaceKey] ?? []
+        permissionValues.formUnion(installedExtension.compatibilityPermissions)
         context.grantedPermissions = Dictionary(
             uniqueKeysWithValues: permissionValues.map {
                 (WKWebExtension.Permission(rawValue: $0), Date.distantFuture)
