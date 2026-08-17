@@ -26,7 +26,7 @@ enum WebExtensionPackagePreparer {
         }
     }
 
-    static let currentCompatibilityRevision = 3
+    static let currentCompatibilityRevision = 4
     static let internalBridgePermission = "nativeMessaging"
     private static let bridgeWorkerFileName = "__ora_mozilla_background.js"
     private static let bridgeWorkerTargetFileName = "__ora_mozilla_background_target.txt"
