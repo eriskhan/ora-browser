@@ -35,6 +35,13 @@ enum MozillaNativeAPIRouter {
         case "dns":
             try require("dns", context: extensionContext, manager: manager)
             return try await MozillaDNSAPI.handle(method: method, arguments: arguments)
+        case "downloads":
+            return try await MozillaDownloadsAPI.handle(
+                method: method,
+                arguments: arguments,
+                context: extensionContext,
+                manager: manager
+            )
         case "idle":
             return try MozillaIdleAPI.handle(
                 method: method,
