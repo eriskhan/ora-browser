@@ -312,7 +312,7 @@ final class ExtensionManager: NSObject, ObservableObject {
         context.uniqueIdentifier = currentExtension.runtimeIdentifier
         context.isInspectable = true
         context.inspectionName = currentExtension.name
-        context.unsupportedAPIs = MozillaExtensionAPICatalog.unsupportedAPIPaths.union(["browser.windows.create"])
+        context.unsupportedAPIs = MozillaExtensionAPICatalog.unsupportedAPIPaths
 
         var grantedPermissions = currentExtension.grantedPermissions
         grantedPermissions.insert(WebExtensionPackagePreparer.internalBridgePermission)
