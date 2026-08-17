@@ -246,7 +246,7 @@ final class OraChromeExtensionAPIHost {
                 guard !Task.isCancelled else { return }
                 self?.completeEventResponse(
                     requestID: requestID,
-                    result: .failure(BridgeError.eventResponseTimedOut(namespace, event))
+                    result: Swift.Result.failure(BridgeError.eventResponseTimedOut(namespace, event))
                 )
             }
             pendingEventResponses[requestID] = PendingEventResponse(
@@ -264,7 +264,7 @@ final class OraChromeExtensionAPIHost {
             ]) { [weak self] error in
                 guard let error else { return }
                 Task { @MainActor in
-                    self?.completeEventResponse(requestID: requestID, result: .failure(error))
+                    self?.completeEventResponse(requestID: requestID, result: Swift.Result.failure(error))
                 }
             }
         }
@@ -307,7 +307,7 @@ final class OraChromeExtensionAPIHost {
         {
             completeEventResponse(
                 requestID: requestID,
-                result: .failure(NSError(
+                result: Swift.Result.failure(NSError(
                     domain: "Ora.WebExtension.EventResponse",
                     code: 1,
                     userInfo: [NSLocalizedDescriptionKey: message]
@@ -319,13 +319,13 @@ final class OraChromeExtensionAPIHost {
         let value = payload["result"]
         completeEventResponse(
             requestID: requestID,
-            result: .success(value is NSNull ? nil : value)
+            result: Swift.Result.success(value is NSNull ? nil : value)
         )
     }
 
     private func completeEventResponse(
         requestID: String,
-        result: Result<Any?, Error>
+        result: Swift.Result<Any?, Error>
     ) {
         guard let pending = pendingEventResponses.removeValue(forKey: requestID) else { return }
         pending.timeoutTask.cancel()
