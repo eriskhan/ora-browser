@@ -71,7 +71,7 @@ final class WebExtensionAuthFlowCoordinator: NSObject, WKNavigationDelegate, NSW
         }
 
         decisionHandler(.cancel)
-        finish(webView: webView, result: .success(url.absoluteString))
+        finish(webView: webView, result: Swift.Result.success(url.absoluteString))
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -86,7 +86,7 @@ final class WebExtensionAuthFlowCoordinator: NSObject, WKNavigationDelegate, NSW
         ))
     }
 
-    private func finish(webView: WKWebView, result: Result<String, Error>) {
+    private func finish(webView: WKWebView, result: Swift.Result<String, Error>) {
         let identifier = ObjectIdentifier(webView)
         guard let session = sessions.removeValue(forKey: identifier) else { return }
         session.window.delegate = nil
