@@ -26,7 +26,7 @@ extension ExtensionManager {
 
         Task { @MainActor in
             do {
-                let value = try await MozillaNativeAPIBridge.shared.handleMessage(
+                let value = try await MozillaNativeAPIRouter.handle(
                     message,
                     for: extensionContext,
                     manager: self
