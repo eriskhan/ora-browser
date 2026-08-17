@@ -193,7 +193,7 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
     ) {
         let alert = NSAlert()
         alert.messageText = "Prompt"
-        alert.informativeText = message
+        alert.informativeText = prompt
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
