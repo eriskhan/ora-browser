@@ -77,6 +77,13 @@ enum MozillaNativeAPIRouter {
                 context: extensionContext,
                 manager: manager
             )
+        case "permissions":
+            return try MozillaPermissionsAPI.handle(
+                method: method,
+                arguments: arguments,
+                context: extensionContext,
+                manager: manager
+            )
         case "privacy":
             return try MozillaPrivacyAPI.handle(
                 method: method,
