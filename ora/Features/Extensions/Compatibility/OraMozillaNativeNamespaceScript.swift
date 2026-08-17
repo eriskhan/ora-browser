@@ -55,6 +55,26 @@ enum OraMozillaNativeNamespaceScript {
         }
     }
 
+    function replaceNamespace(name, value) {
+        try {
+            Object.defineProperty(root, name, {
+                value,
+                configurable: true,
+                enumerable: true,
+                writable: false
+            });
+            return;
+        } catch (_error) {}
+        const target = root[name];
+        if (!target) {
+            try { root[name] = value; } catch (_ignored) {}
+            return;
+        }
+        for (const key of Object.keys(value)) {
+            try { target[key] = value[key]; } catch (_ignored) {}
+        }
+    }
+
     async function nativeCall(namespace, method, args = []) {
         if (typeof root.runtime.sendNativeMessage !== "function") {
             throw new Error(
@@ -237,6 +257,20 @@ enum OraMozillaNativeNamespaceScript {
             onUpdated: nativeEvent("contextualIdentities", "onUpdated"),
             onRemoved: nativeEvent("contextualIdentities", "onRemoved")
         });
+    }
+
+    if (hasPermission("cookies")) {
+        const nativeCookies = root.cookies;
+        const cookies = Object.create(nativeCookies || null);
+        Object.assign(cookies, {
+            get: (details) => nativeCall("cookies", "get", [details || {}]),
+            getAll: (details = {}) => nativeCall("cookies", "getAll", [details]),
+            set: (details) => nativeCall("cookies", "set", [details || {}]),
+            remove: (details) => nativeCall("cookies", "remove", [details || {}]),
+            getAllCookieStores: () => nativeCall("cookies", "getAllCookieStores"),
+            onChanged: nativeEvent("cookies", "onChanged", { subscribe: "__subscribe" })
+        });
+        replaceNamespace("cookies", cookies);
     }
 
     if (!root.dns && hasPermission("dns")) {
