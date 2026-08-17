@@ -172,6 +172,26 @@ enum OraMozillaNativeNamespaceScript {
         };
     }
 
+    function nativeBrowserSetting(namespace, setting, readOnly = false) {
+        return {
+            get: (details = {}) => nativeCall(namespace, "get", [setting, details]),
+            set: readOnly
+                ? () => Promise.resolve(false)
+                : (details) => nativeCall(namespace, "set", [setting, details && details.value]),
+            clear: readOnly
+                ? () => Promise.resolve(false)
+                : (details = {}) => nativeCall(namespace, "clear", [setting, details]),
+            onChange: nativeEvent(namespace, `onChange:${setting}`)
+        };
+    }
+
+    if (!root.browserSettings && hasPermission("browserSettings")) {
+        defineIfMissing("browserSettings", {
+            verticalTabs: nativeBrowserSetting("browserSettings", "verticalTabs", true),
+            newTabPosition: nativeBrowserSetting("browserSettings", "newTabPosition", true)
+        });
+    }
+
     if (!root.browsingData && hasPermission("browsingData")) {
         defineIfMissing("browsingData", {
             settings: () => nativeCall("browsingData", "settings"),
@@ -287,6 +307,28 @@ enum OraMozillaNativeNamespaceScript {
             onUninstalled: nativeEvent("management", "onUninstalled", { subscribe: "__subscribe" }),
             onEnabled: nativeEvent("management", "onEnabled", { subscribe: "__subscribe" }),
             onDisabled: nativeEvent("management", "onDisabled", { subscribe: "__subscribe" })
+        });
+    }
+
+    if (!root.privacy && hasPermission("privacy")) {
+        defineIfMissing("privacy", {
+            services: {
+                passwordSavingEnabled: nativeBrowserSetting(
+                    "privacy",
+                    "services.passwordSavingEnabled"
+                )
+            },
+            websites: {
+                cookieConfig: nativeBrowserSetting("privacy", "websites.cookieConfig"),
+                trackingProtectionMode: nativeBrowserSetting(
+                    "privacy",
+                    "websites.trackingProtectionMode"
+                ),
+                resistFingerprinting: nativeBrowserSetting(
+                    "privacy",
+                    "websites.resistFingerprinting"
+                )
+            }
         });
     }
 })();
