@@ -4,6 +4,7 @@ import ZIPFoundation
 struct PreparedWebExtensionPackage {
     let resourceURL: URL
     let originalPermissions: Set<String>
+    let optionalPermissions: Set<String>
     let compatibilityRevision: Int
 }
 
@@ -25,7 +26,7 @@ enum WebExtensionPackagePreparer {
         }
     }
 
-    static let currentCompatibilityRevision = 1
+    static let currentCompatibilityRevision = 2
     static let internalBridgePermission = "nativeMessaging"
     private static let bridgeWorkerFileName = "__ora_mozilla_background.js"
 
@@ -60,6 +61,23 @@ enum WebExtensionPackagePreparer {
     }
 
     static func inferOriginalPermissions(at rootURL: URL) throws -> Set<String> {
+        var permissions = try manifestPermissions(at: rootURL, key: "permissions")
+        let compatibilityURL = rootURL.appendingPathComponent(OraMozillaCompatibilityScript.fileName)
+        if FileManager.default.fileExists(atPath: compatibilityURL.path),
+           let source = try? String(contentsOf: compatibilityURL, encoding: .utf8),
+           source.contains("ORA_ORIGINAL_PERMISSIONS"),
+           source.contains("const ORA_ORIGINAL_NATIVE_MESSAGING = false")
+        {
+            permissions.remove(internalBridgePermission)
+        }
+        return permissions
+    }
+
+    static func inferOptionalPermissions(at rootURL: URL) throws -> Set<String> {
+        try manifestPermissions(at: rootURL, key: "optional_permissions")
+    }
+
+    private static func manifestPermissions(at rootURL: URL, key: String) throws -> Set<String> {
         let manifestURL = rootURL.appendingPathComponent("manifest.json")
         guard let text = try? String(contentsOf: manifestURL, encoding: .utf8),
               let data = removingJSONComments(from: text).data(using: .utf8),
@@ -67,21 +85,7 @@ enum WebExtensionPackagePreparer {
         else {
             throw PreparationError.invalidManifest
         }
-
-        var permissions = Set(manifest["permissions"] as? [String] ?? [])
-        let compatibilityURL = rootURL.appendingPathComponent(OraMozillaCompatibilityScript.fileName)
-        if FileManager.default.fileExists(atPath: compatibilityURL.path),
-           let source = try? String(contentsOf: compatibilityURL, encoding: .utf8),
-           source.contains("ORA_ORIGINAL_PERMISSIONS")
-        {
-            // Revisions that use the Ora native bridge inject nativeMessaging into
-            // the prepared manifest. Unless the generated shim explicitly recorded
-            // that it was original, do not migrate the injected permission as user intent.
-            if source.contains("const ORA_ORIGINAL_NATIVE_MESSAGING = false") {
-                permissions.remove(internalBridgePermission)
-            }
-        }
-        return permissions
+        return Set(manifest[key] as? [String] ?? [])
     }
 
     private static func patchPreparedResource(
@@ -97,14 +101,20 @@ enum WebExtensionPackagePreparer {
         }
 
         let originalPermissions = explicitOriginalPermissions ?? Set(manifest["permissions"] as? [String] ?? [])
+        let optionalPermissions = Set(manifest["optional_permissions"] as? [String] ?? [])
+        let declaredPermissions = originalPermissions.union(optionalPermissions)
         let originallyRequestedNativeMessaging = originalPermissions.contains(internalBridgePermission)
-        let encodedOriginalPermissions = jsonArrayLiteral(Array(originalPermissions).sorted())
+        let encodedRequiredPermissions = jsonArrayLiteral(Array(originalPermissions).sorted())
+        let encodedOptionalPermissions = jsonArrayLiteral(Array(optionalPermissions).sorted())
+        let encodedDeclaredPermissions = jsonArrayLiteral(Array(declaredPermissions).sorted())
         let compatibilitySource = OraMozillaCompatibilityScript.source
             .replacingOccurrences(
                 of: "__ORA_ORIGINAL_NATIVE_MESSAGING__",
                 with: originallyRequestedNativeMessaging ? "true" : "false"
             )
-            .replacingOccurrences(of: "__ORA_ORIGINAL_PERMISSIONS__", with: encodedOriginalPermissions)
+            .replacingOccurrences(of: "__ORA_ORIGINAL_PERMISSIONS__", with: encodedDeclaredPermissions)
+            .replacingOccurrences(of: "__ORA_REQUIRED_PERMISSIONS__", with: encodedRequiredPermissions)
+            .replacingOccurrences(of: "__ORA_OPTIONAL_PERMISSIONS__", with: encodedOptionalPermissions)
 
         try compatibilitySource.write(
             to: rootURL.appendingPathComponent(OraMozillaCompatibilityScript.fileName),
@@ -125,6 +135,7 @@ enum WebExtensionPackagePreparer {
         return PreparedWebExtensionPackage(
             resourceURL: rootURL,
             originalPermissions: originalPermissions,
+            optionalPermissions: optionalPermissions,
             compatibilityRevision: currentCompatibilityRevision
         )
     }
