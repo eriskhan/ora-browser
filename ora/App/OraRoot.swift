@@ -209,7 +209,9 @@ struct OraRoot: View {
                 NotificationCenter.default.addObserver(forName: .findInPage, object: nil, queue: .main) { note in
                     Task { @MainActor in
                         guard note.object as? NSWindow === window ?? NSApp.keyWindow else { return }
-                        if let activeTab = tabManager.activeTab { appState.showFinderIn = activeTab.id }
+                        if let activeTab = tabManager.activeTab {
+                            appState.showFinderIn = activeTab.id
+                        }
                     }
                 }
                 NotificationCenter.default.addObserver(forName: .toggleFullURL, object: nil, queue: .main) { note in
@@ -243,7 +245,9 @@ struct OraRoot: View {
                 NotificationCenter.default.addObserver(forName: .togglePinTab, object: nil, queue: .main) { note in
                     Task { @MainActor in
                         guard note.object as? NSWindow === window ?? NSApp.keyWindow else { return }
-                        if let tab = tabManager.activeTab { tabManager.togglePinTab(tab) }
+                        if let tab = tabManager.activeTab {
+                            tabManager.togglePinTab(tab)
+                        }
                     }
                 }
                 NotificationCenter.default.addObserver(forName: .nextTab, object: nil, queue: .main) { note in

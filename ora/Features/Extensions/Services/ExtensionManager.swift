@@ -38,7 +38,7 @@ final class ExtensionManager: NSObject, ObservableObject {
     private var windowWrappers: [ObjectIdentifier: OraWebExtensionWindow] = [:]
     private var didLoadRegistryExtensions = false
 
-    private override init() {
+    override private init() {
         let configuration = WKWebExtensionController.Configuration(identifier: Self.controllerIdentifier)
         controller = WKWebExtensionController(configuration: configuration)
         super.init()
@@ -255,7 +255,9 @@ final class ExtensionManager: NSObject, ObservableObject {
 
     private func load(_ installedExtension: InstalledWebExtension) async throws {
         guard installedExtension.isEnabled else { return }
-        if contexts[installedExtension.id] != nil { return }
+        if contexts[installedExtension.id] != nil {
+            return
+        }
 
         let extensionObject: WKWebExtension
         if let cached = extensionObjects[installedExtension.id] {
