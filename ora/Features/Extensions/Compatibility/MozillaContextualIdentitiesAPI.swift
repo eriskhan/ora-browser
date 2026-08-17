@@ -34,148 +34,227 @@ enum MozillaContextualIdentitiesAPI {
         "vacation": "airplane"
     ]
 
+    private static let iconEmoji: [String: String] = [
+        "briefcase": "💼",
+        "cart": "🛒",
+        "chill": "❄️",
+        "dollar": "💵",
+        "fence": "🚧",
+        "fingerprint": "🆔",
+        "food": "🍴",
+        "fruit": "🍎",
+        "gift": "🎁",
+        "pet": "🐾",
+        "tree": "🌳",
+        "vacation": "✈️"
+    ]
+
     static func handle(
         method: String,
         arguments: [Any],
         context: WKWebExtensionContext,
         manager: ExtensionManager
     ) async throws -> Any {
-        guard manager.hasBridgeAccess(to: "contextualIdentities", for: context),
-              manager.hasBridgeAccess(to: "cookies", for: context)
-        else {
-            throw MozillaNativeAPIBridge.BridgeError.permissionDenied("contextualIdentities and cookies")
-        }
-
+        try requireAccess(context: context, manager: manager)
         let tabManager = try tabManager(for: context)
         try normalizeOrder(in: tabManager)
 
         switch method {
         case "get":
-            guard let cookieStoreID = arguments.first as? String,
-                  let container = container(for: cookieStoreID, in: tabManager)
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.itemNotFound("The requested contextual identity does not exist.")
-            }
-            return identity(for: container)
-
+            return try get(arguments: arguments, tabManager: tabManager)
         case "query":
-            let details = arguments.first as? [String: Any] ?? [:]
-            let requestedName = details["name"] as? String
-            return orderedContainers(in: tabManager)
-                .filter { requestedName == nil || $0.name == requestedName }
-                .map(identity(for:))
-
+            return query(arguments: arguments, tabManager: tabManager)
         case "create":
-            guard let details = arguments.first as? [String: Any],
-                  let name = details["name"] as? String,
-                  let colorValue = details["color"] as? String,
-                  let icon = details["icon"] as? String
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
-                    "browser.contextualIdentities.create requires name, color, and icon."
-                )
-            }
-            let color = try normalizedColor(colorValue)
-            try validateIcon(icon)
-            let nextOrder = (orderedContainers(in: tabManager).last?.contextualOrder ?? -1) + 1
-            let container = TabContainer(
-                name: name,
-                emoji: emoji(for: icon),
-                contextualColor: color,
-                contextualIcon: icon,
-                contextualOrder: nextOrder
-            )
-            tabManager.modelContext.insert(container)
-            try tabManager.modelContext.save()
-            let value = identity(for: container)
-            MozillaNativeAPIBridge.shared.emit(
-                namespace: "contextualIdentities",
-                event: "onCreated",
-                arguments: [["contextualIdentity": value]]
-            )
-            return value
-
+            return try create(arguments: arguments, tabManager: tabManager)
         case "update":
-            guard arguments.count >= 2,
-                  let cookieStoreID = arguments[0] as? String,
-                  let details = arguments[1] as? [String: Any],
-                  let container = container(for: cookieStoreID, in: tabManager)
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.itemNotFound("The requested contextual identity does not exist.")
-            }
-
-            if let name = details["name"] as? String {
-                container.name = name
-            }
-            if let color = details["color"] as? String {
-                container.contextualColor = try normalizedColor(color)
-            }
-            if let icon = details["icon"] as? String {
-                try validateIcon(icon)
-                container.contextualIcon = icon
-                container.emoji = emoji(for: icon)
-            }
-            try tabManager.modelContext.save()
-            let value = identity(for: container)
-            MozillaNativeAPIBridge.shared.emit(
-                namespace: "contextualIdentities",
-                event: "onUpdated",
-                arguments: [["contextualIdentity": value]]
-            )
-            return value
-
+            return try update(arguments: arguments, tabManager: tabManager)
         case "move":
-            guard arguments.count >= 2,
-                  let position = integer(arguments[1])
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
-                    "browser.contextualIdentities.move requires cookieStoreIds and a position."
-                )
-            }
-            let identifiers: [String]
-            if let single = arguments[0] as? String {
-                identifiers = [single]
-            } else if let multiple = arguments[0] as? [String] {
-                identifiers = multiple
-            } else {
-                throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
-                    "browser.contextualIdentities.move requires a cookie store ID or an array of IDs."
-                )
-            }
-            try move(identifiers: identifiers, position: position, tabManager: tabManager)
-            return NSNull()
-
+            return try moveRequest(arguments: arguments, tabManager: tabManager)
         case "remove":
-            guard let cookieStoreID = arguments.first as? String,
-                  let container = container(for: cookieStoreID, in: tabManager)
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.itemNotFound("The requested contextual identity does not exist.")
-            }
-            let removedIdentity = identity(for: container)
-            let containerID = container.id
-            tabManager.deleteContainer(container)
-            try await waitUntilContainerIsDeleted(containerID, tabManager: tabManager)
-            try normalizeOrder(in: tabManager)
-            MozillaNativeAPIBridge.shared.emit(
-                namespace: "contextualIdentities",
-                event: "onRemoved",
-                arguments: [["contextualIdentity": removedIdentity]]
-            )
-            return removedIdentity
-
+            return try await remove(arguments: arguments, tabManager: tabManager)
         case "getSupportedColors":
-            return colorCodes.keys.sorted().map { color in
-                ["color": color, "colorCode": colorCodes[color] ?? "#7c7c7d"]
-            }
-
+            return supportedColors()
         case "getSupportedIcons":
-            return iconSymbols.keys.sorted().map { icon in
-                ["icon": icon, "iconUrl": iconURL(for: icon)]
-            }
-
+            return supportedIcons()
         default:
             throw MozillaNativeAPIBridge.BridgeError.unsupportedMethod("contextualIdentities", method)
         }
+    }
+
+    private static func requireAccess(
+        context: WKWebExtensionContext,
+        manager: ExtensionManager
+    ) throws {
+        guard manager.hasBridgeAccess(to: "contextualIdentities", for: context),
+              manager.hasBridgeAccess(to: "cookies", for: context)
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.permissionDenied(
+                "contextualIdentities and cookies"
+            )
+        }
+    }
+
+    private static func get(
+        arguments: [Any],
+        tabManager: TabManager
+    ) throws -> [String: Any] {
+        guard let cookieStoreID = arguments.first as? String,
+              let container = container(for: cookieStoreID, in: tabManager)
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.itemNotFound(
+                "The requested contextual identity does not exist."
+            )
+        }
+        return identity(for: container)
+    }
+
+    private static func query(
+        arguments: [Any],
+        tabManager: TabManager
+    ) -> [[String: Any]] {
+        let details = arguments.first as? [String: Any] ?? [:]
+        let requestedName = details["name"] as? String
+        return orderedContainers(in: tabManager)
+            .filter { requestedName == nil || $0.name == requestedName }
+            .map(identity(for:))
+    }
+
+    private static func create(
+        arguments: [Any],
+        tabManager: TabManager
+    ) throws -> [String: Any] {
+        guard let details = arguments.first as? [String: Any],
+              let name = details["name"] as? String,
+              let colorValue = details["color"] as? String,
+              let icon = details["icon"] as? String
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "browser.contextualIdentities.create requires name, color, and icon."
+            )
+        }
+
+        let color = try normalizedColor(colorValue)
+        try validateIcon(icon)
+        let nextOrder = (orderedContainers(in: tabManager).last?.contextualOrder ?? -1) + 1
+        let container = TabContainer(
+            name: name,
+            emoji: emoji(for: icon),
+            contextualColor: color,
+            contextualIcon: icon,
+            contextualOrder: nextOrder
+        )
+        tabManager.modelContext.insert(container)
+        try tabManager.modelContext.save()
+        let value = identity(for: container)
+        emit(event: "onCreated", identity: value)
+        return value
+    }
+
+    private static func update(
+        arguments: [Any],
+        tabManager: TabManager
+    ) throws -> [String: Any] {
+        guard arguments.count >= 2,
+              let cookieStoreID = arguments[0] as? String,
+              let details = arguments[1] as? [String: Any],
+              let container = container(for: cookieStoreID, in: tabManager)
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.itemNotFound(
+                "The requested contextual identity does not exist."
+            )
+        }
+
+        try apply(details: details, to: container)
+        try tabManager.modelContext.save()
+        let value = identity(for: container)
+        emit(event: "onUpdated", identity: value)
+        return value
+    }
+
+    private static func apply(
+        details: [String: Any],
+        to container: TabContainer
+    ) throws {
+        if let name = details["name"] as? String {
+            container.name = name
+        }
+        if let color = details["color"] as? String {
+            container.contextualColor = try normalizedColor(color)
+        }
+        if let icon = details["icon"] as? String {
+            try validateIcon(icon)
+            container.contextualIcon = icon
+            container.emoji = emoji(for: icon)
+        }
+    }
+
+    private static func moveRequest(
+        arguments: [Any],
+        tabManager: TabManager
+    ) throws -> Any {
+        guard arguments.count >= 2,
+              let position = integer(arguments[1])
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "browser.contextualIdentities.move requires cookieStoreIds and a position."
+            )
+        }
+        let identifiers = try contextualIdentityIDs(from: arguments[0])
+        try move(identifiers: identifiers, position: position, tabManager: tabManager)
+        return NSNull()
+    }
+
+    private static func contextualIdentityIDs(from value: Any) throws -> [String] {
+        if let single = value as? String {
+            return [single]
+        }
+        if let multiple = value as? [String] {
+            return multiple
+        }
+        throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+            "browser.contextualIdentities.move requires a cookie store ID or an array of IDs."
+        )
+    }
+
+    private static func remove(
+        arguments: [Any],
+        tabManager: TabManager
+    ) async throws -> [String: Any] {
+        guard let cookieStoreID = arguments.first as? String,
+              let container = container(for: cookieStoreID, in: tabManager)
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.itemNotFound(
+                "The requested contextual identity does not exist."
+            )
+        }
+
+        let removedIdentity = identity(for: container)
+        let containerID = container.id
+        tabManager.deleteContainer(container)
+        try await waitUntilContainerIsDeleted(containerID, tabManager: tabManager)
+        try normalizeOrder(in: tabManager)
+        emit(event: "onRemoved", identity: removedIdentity)
+        return removedIdentity
+    }
+
+    private static func supportedColors() -> [[String: String]] {
+        colorCodes.keys.sorted().map { color in
+            ["color": color, "colorCode": colorCodes[color] ?? "#7c7c7d"]
+        }
+    }
+
+    private static func supportedIcons() -> [[String: String]] {
+        iconSymbols.keys.sorted().map { icon in
+            ["icon": icon, "iconUrl": iconURL(for: icon)]
+        }
+    }
+
+    private static func emit(event: String, identity: [String: Any]) {
+        MozillaNativeAPIBridge.shared.emit(
+            namespace: "contextualIdentities",
+            event: event,
+            arguments: [["contextualIdentity": identity]]
+        )
     }
 
     private static func orderedContainers(in tabManager: TabManager) -> [TabContainer] {
@@ -211,29 +290,18 @@ enum MozillaContextualIdentitiesAPI {
         }
 
         var ordered = orderedContainers(in: tabManager)
-        var moving: [TabContainer] = []
-        for identifier in identifiers {
+        let moving = try identifiers.map { identifier in
             guard let match = container(for: identifier, in: tabManager) else {
                 throw MozillaNativeAPIBridge.BridgeError.itemNotFound(
                     "No Ora space matches cookieStoreId \(identifier)."
                 )
             }
-            moving.append(match)
+            return match
         }
 
         let movingIDs = Set(moving.map(\.id))
         ordered.removeAll { movingIDs.contains($0.id) }
-        let insertionIndex: Int
-        if position == -1 {
-            insertionIndex = ordered.count
-        } else {
-            guard position >= 0, position <= ordered.count else {
-                throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
-                    "The requested contextual identity position is outside the available range."
-                )
-            }
-            insertionIndex = position
-        }
+        let insertionIndex = try validatedPosition(position, availableCount: ordered.count)
         ordered.insert(contentsOf: moving, at: insertionIndex)
         for (index, container) in ordered.enumerated() {
             container.contextualOrder = index
@@ -241,7 +309,22 @@ enum MozillaContextualIdentitiesAPI {
         try tabManager.modelContext.save()
     }
 
-    private static func container(for cookieStoreID: String, in tabManager: TabManager) -> TabContainer? {
+    private static func validatedPosition(_ position: Int, availableCount: Int) throws -> Int {
+        if position == -1 {
+            return availableCount
+        }
+        guard position >= 0, position <= availableCount else {
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "The requested contextual identity position is outside the available range."
+            )
+        }
+        return position
+    }
+
+    private static func container(
+        for cookieStoreID: String,
+        in tabManager: TabManager
+    ) -> TabContainer? {
         guard let id = try? MozillaBrowsingDataAPI.containerID(
             from: cookieStoreID,
             tabManager: tabManager
@@ -258,21 +341,17 @@ enum MozillaContextualIdentitiesAPI {
             "cookieStoreId": MozillaBrowsingDataAPI.cookieStoreID(for: container.id),
             "name": container.name,
             "color": color,
-            "colorCode": colorCodes[color] ?? colorCodes["blue"]!,
+            "colorCode": colorCodes[color] ?? "#37adff",
             "icon": icon,
             "iconUrl": iconURL(for: icon)
         ]
     }
 
     private static func normalizedColor(_ value: String) throws -> String {
-        let normalized: String
-        switch value {
-        case "turquoise":
-            normalized = "cyan"
-        case "toolbar":
-            normalized = "gray"
-        default:
-            normalized = value
+        let normalized = switch value {
+        case "turquoise": "cyan"
+        case "toolbar": "gray"
+        default: value
         }
         guard colorCodes[normalized] != nil else {
             throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
@@ -303,21 +382,7 @@ enum MozillaContextualIdentitiesAPI {
     }
 
     private static func emoji(for icon: String) -> String {
-        switch icon {
-        case "briefcase": "💼"
-        case "cart": "🛒"
-        case "chill": "❄️"
-        case "dollar": "💵"
-        case "fence": "🚧"
-        case "fingerprint": "🆔"
-        case "food": "🍴"
-        case "fruit": "🍎"
-        case "gift": "🎁"
-        case "pet": "🐾"
-        case "tree": "🌳"
-        case "vacation": "✈️"
-        default: "●"
-        }
+        iconEmoji[icon] ?? "●"
     }
 
     private static func integer(_ value: Any) -> Int? {
