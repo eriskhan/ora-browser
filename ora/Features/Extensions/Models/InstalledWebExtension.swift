@@ -11,6 +11,7 @@ struct InstalledWebExtension: Codable, Hashable, Identifiable {
     var isEnabled: Bool
     var permissionDecisionMade: Bool
     var originalPermissions: Set<String>
+    var optionalPermissions: Set<String>
     var grantedPermissions: Set<String>
     var grantedMatchPatterns: Set<String>
     var compatibilityRevision: Int
@@ -26,6 +27,7 @@ struct InstalledWebExtension: Codable, Hashable, Identifiable {
         isEnabled: Bool = true,
         permissionDecisionMade: Bool = false,
         originalPermissions: Set<String> = [],
+        optionalPermissions: Set<String> = [],
         grantedPermissions: Set<String> = [],
         grantedMatchPatterns: Set<String> = [],
         compatibilityRevision: Int = 0
@@ -40,9 +42,14 @@ struct InstalledWebExtension: Codable, Hashable, Identifiable {
         self.isEnabled = isEnabled
         self.permissionDecisionMade = permissionDecisionMade
         self.originalPermissions = originalPermissions
+        self.optionalPermissions = optionalPermissions
         self.grantedPermissions = grantedPermissions
         self.grantedMatchPatterns = grantedMatchPatterns
         self.compatibilityRevision = compatibilityRevision
+    }
+
+    var declaredPermissions: Set<String> {
+        originalPermissions.union(optionalPermissions)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -56,6 +63,7 @@ struct InstalledWebExtension: Codable, Hashable, Identifiable {
         case isEnabled
         case permissionDecisionMade
         case originalPermissions
+        case optionalPermissions
         case grantedPermissions
         case grantedMatchPatterns
         case compatibilityRevision
@@ -73,6 +81,7 @@ struct InstalledWebExtension: Codable, Hashable, Identifiable {
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         permissionDecisionMade = try container.decodeIfPresent(Bool.self, forKey: .permissionDecisionMade) ?? false
         originalPermissions = try container.decodeIfPresent(Set<String>.self, forKey: .originalPermissions) ?? []
+        optionalPermissions = try container.decodeIfPresent(Set<String>.self, forKey: .optionalPermissions) ?? []
         grantedPermissions = try container.decodeIfPresent(Set<String>.self, forKey: .grantedPermissions) ?? []
         grantedMatchPatterns = try container.decodeIfPresent(Set<String>.self, forKey: .grantedMatchPatterns) ?? []
         compatibilityRevision = try container.decodeIfPresent(Int.self, forKey: .compatibilityRevision) ?? 0
