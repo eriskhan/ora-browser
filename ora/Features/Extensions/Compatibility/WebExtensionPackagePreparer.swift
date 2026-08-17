@@ -53,7 +53,7 @@ struct WebExtensionPackagePreparer {
         manifest["permissions"] = permissions
 
         let bridgeURL = rootURL.appendingPathComponent(OraChromeAPIBridgeScript.fileName)
-        try OraChromeAPIBridgeScript.source.write(to: bridgeURL, atomically: true, encoding: .utf8)
+        try OraChromeCompatibilityScript.source.write(to: bridgeURL, atomically: true, encoding: .utf8)
 
         patchBackground(in: &manifest, rootURL: rootURL)
         patchContentScripts(in: &manifest)
@@ -100,9 +100,9 @@ struct WebExtensionPackagePreparer {
             let workerLiteral = jsonStringLiteral(type == "module" ? moduleSpecifier(for: worker) : worker)
             let wrapper: String
             if type == "module" {
-                wrapper = OraChromeAPIBridgeScript.source + "\nimport \(workerLiteral);\n"
+                wrapper = OraChromeCompatibilityScript.source + "\nimport \(workerLiteral);\n"
             } else {
-                wrapper = OraChromeAPIBridgeScript.source + "\nimportScripts(\(workerLiteral));\n"
+                wrapper = OraChromeCompatibilityScript.source + "\nimportScripts(\(workerLiteral));\n"
             }
             try? wrapper.write(
                 to: rootURL.appendingPathComponent(bridgeWorkerFileName),
