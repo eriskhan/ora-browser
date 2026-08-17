@@ -98,25 +98,30 @@ enum MozillaCookiesAPI {
     ) async throws -> [[String: Any]] {
         let details = arguments.first as? [String: Any] ?? [:]
         try rejectUnsupportedPartitioning(details)
-        let selections = try storeSelections(details: details, tabManager: tabManager)
-        var results: [(HTTPCookie, String)] = []
+        let selection = try storeSelection(details: details, tabManager: tabManager)
+        let cookies = await allCookies(in: selection.store)
+        var results: [[String: Any]] = []
 
-        for selection in selections {
-            let cookies = await allCookies(in: selection.store)
-            for cookie in cookies where cookieMatchesFilters(cookie, details: details) {
-                guard canAccess(cookie, context: context) else { continue }
-                if let urlString = details["url"] as? String,
-                   let url = URL(string: urlString),
-                   !cookie(cookie, matches: url)
-                {
-                    continue
-                }
-                results.append((cookie, selection.storeID))
+        for cookie in cookies where cookieMatchesFilters(cookie, details: details) {
+            guard canAccess(cookie, context: context) else { continue }
+            if let urlString = details["url"] as? String,
+               let url = URL(string: urlString),
+               !cookie(cookie, matches: url)
+            {
+                continue
             }
+            results.append(cookieValue(cookie, storeID: selection.storeID))
         }
-        return results
-            .sorted { firefoxCookieOrder($0.0, $1.0) }
-            .map { cookieValue($0.0, storeID: $0.1) }
+        return results.sorted { lhs, rhs in
+            let leftPath = lhs["path"] as? String ?? ""
+            let rightPath = rhs["path"] as? String ?? ""
+            if leftPath.count != rightPath.count {
+                return leftPath.count > rightPath.count
+            }
+            let leftName = lhs["name"] as? String ?? ""
+            let rightName = rhs["name"] as? String ?? ""
+            return leftName.localizedStandardCompare(rightName) == .orderedAscending
+        }
     }
 
     private static func set(
@@ -227,16 +232,6 @@ enum MozillaCookiesAPI {
             throw MozillaNativeAPIBridge.BridgeError.unavailableBrowserWindow
         }
         return selection(for: container)
-    }
-
-    private static func storeSelections(
-        details: [String: Any],
-        tabManager: TabManager
-    ) throws -> [StoreSelection] {
-        if details["storeId"] != nil {
-            return [try storeSelection(details: details, tabManager: tabManager)]
-        }
-        return tabManager.containers.map(selection(for:))
     }
 
     private static func selection(for container: TabContainer) -> StoreSelection {
