@@ -24,11 +24,16 @@ enum OraMozillaCompatibilityScript {
 
     const ORA_NATIVE_APPLICATION = "com.orabrowser.ora.mozilla";
     const ORA_ORIGINAL_NATIVE_MESSAGING = __ORA_ORIGINAL_NATIVE_MESSAGING__;
+    const ORA_ORIGINAL_PERMISSIONS = new Set(__ORA_ORIGINAL_PERMISSIONS__);
     const eventListeners = new Map();
     let eventPort;
     let generatedContentScriptID = 0;
     let generatedLegacyUserScriptID = 0;
     const registeredUserScriptIDs = new Set();
+
+    function hasOriginalPermission(permission) {
+        return ORA_ORIGINAL_PERMISSIONS.has(permission);
+    }
 
     function defineIfMissing(name, value) {
         if (root[name] !== undefined && root[name] !== null) return;
@@ -199,7 +204,7 @@ enum OraMozillaCompatibilityScript {
         }
     }
 
-    if (!root.history) {
+    if (!root.history && hasOriginalPermission("history")) {
         defineIfMissing("history", {
             search: (query) => nativeCall("history", "search", [normalizeHistoryQuery(query)]),
             getVisits: (details) => nativeCall("history", "getVisits", [details || {}]),
@@ -217,13 +222,13 @@ enum OraMozillaCompatibilityScript {
         });
     }
 
-    if (!root.topSites) {
+    if (!root.topSites && hasOriginalPermission("topSites")) {
         defineIfMissing("topSites", {
             get: (options = {}) => nativeCall("topSites", "get", [options])
         });
     }
 
-    if (!root.search) {
+    if (!root.search && hasOriginalPermission("search")) {
         async function performSearch(properties, defaultDisposition) {
             const details = properties || {};
             if (details.tabId !== undefined && details.disposition !== undefined) {
