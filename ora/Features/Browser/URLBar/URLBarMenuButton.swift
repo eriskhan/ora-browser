@@ -73,6 +73,10 @@ struct URLBarMenuButton: View {
     private func addExtensionItems(to menu: NSMenu, sourceView: NSView) {
         guard let activeTab = tabManager.activeTab, !activeTab.isPrivate else { return }
 
+        Task { @MainActor in
+            await OraDeclarativeContentManager.shared.evaluate(tab: activeTab)
+        }
+
         let tabAdapter = OraWebExtensionTabCache.shared.adapter(for: activeTab)
         let loadedExtensions = WebExtensionManager.shared.loadedExtensions(in: activeTab.container.id)
         let actionEntries = loadedExtensions.compactMap { entry -> (
@@ -97,8 +101,16 @@ struct URLBarMenuButton: View {
                 action: #selector(MenuActions.performAction(_:)),
                 keyEquivalent: ""
             )
-            item.isEnabled = action.isEnabled
-            item.image = action.icon(for: CGSize(width: 16, height: 16))
+            let declarativeEnabled = OraDeclarativeContentManager.shared.actionEnabled(
+                runtimeIdentifier: installedExtension.runtimeIdentifier,
+                tab: activeTab
+            )
+            item.isEnabled = action.isEnabled && (declarativeEnabled ?? true)
+            item.image = OraDeclarativeContentManager.shared.actionIcon(
+                runtimeIdentifier: installedExtension.runtimeIdentifier,
+                tab: activeTab,
+                size: CGSize(width: 16, height: 16)
+            ) ?? action.icon(for: CGSize(width: 16, height: 16))
 
             let delegate = MenuActions { [sourceView] in
                 WebExtensionPermissionPrompter.shared.performAction(

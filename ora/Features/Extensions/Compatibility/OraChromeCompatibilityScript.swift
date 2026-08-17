@@ -3,7 +3,8 @@ enum OraChromeCompatibilityScript {
         [
             OraChromeAPIBridgeScript.source,
             OraChromeTabGroupBridgeScript.source,
-            OraChromeUserScriptsBridgeScript.source
+            OraChromeUserScriptsBridgeScript.source,
+            OraChromeDeclarativeContentBridgeScript.source
         ].joined(separator: "\n")
     }
 }

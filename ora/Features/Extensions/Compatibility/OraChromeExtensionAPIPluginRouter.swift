@@ -40,6 +40,15 @@ enum OraChromeExtensionAPIPluginRouter {
                     context: context
                 )
             )
+        case "declarativeContent":
+            return RoutedValue(
+                value: try OraDeclarativeContentManager.shared.handle(
+                    method: method,
+                    args: args,
+                    spaceID: spaceID,
+                    context: context
+                )
+            )
         default:
             return nil
         }
