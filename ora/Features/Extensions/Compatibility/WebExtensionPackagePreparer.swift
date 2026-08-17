@@ -56,10 +56,13 @@ enum WebExtensionPackagePreparer {
 
         let originalPermissions = manifest["permissions"] as? [String] ?? []
         let originallyRequestedNativeMessaging = originalPermissions.contains(internalBridgePermission)
-        let compatibilitySource = OraMozillaCompatibilityScript.source.replacingOccurrences(
-            of: "__ORA_ORIGINAL_NATIVE_MESSAGING__",
-            with: originallyRequestedNativeMessaging ? "true" : "false"
-        )
+        let encodedOriginalPermissions = jsonArrayLiteral(originalPermissions)
+        let compatibilitySource = OraMozillaCompatibilityScript.source
+            .replacingOccurrences(
+                of: "__ORA_ORIGINAL_NATIVE_MESSAGING__",
+                with: originallyRequestedNativeMessaging ? "true" : "false"
+            )
+            .replacingOccurrences(of: "__ORA_ORIGINAL_PERMISSIONS__", with: encodedOriginalPermissions)
 
         try compatibilitySource.write(
             to: rootURL.appendingPathComponent(OraMozillaCompatibilityScript.fileName),
@@ -261,6 +264,15 @@ enum WebExtensionPackagePreparer {
             return path
         }
         return "./" + path
+    }
+
+    private static func jsonArrayLiteral(_ values: [String]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: values),
+              let result = String(data: data, encoding: .utf8)
+        else {
+            return "[]"
+        }
+        return result
     }
 
     private static func jsonStringLiteral(_ value: String) -> String {
