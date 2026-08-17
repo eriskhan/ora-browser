@@ -67,7 +67,7 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
             var changedProperties: WKWebExtension.TabChangedProperties = [.loading]
             if let url = event.url {
                 tab.url = url
-                changedProperties.insert(.url)
+                changedProperties.insert(.URL)
             }
             notifyExtensionTabChanged(changedProperties, tab: tab)
 
@@ -99,7 +99,7 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
             }
             if let url = event.url {
                 tab.url = url
-                changedProperties.insert(.url)
+                changedProperties.insert(.URL)
                 if tab.favicon == nil {
                     tab.setFavicon()
                 }
@@ -263,7 +263,7 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
             changedProperties.insert(.title)
         }
         if oldURL != tab.url {
-            changedProperties.insert(.url)
+            changedProperties.insert(.URL)
         }
         if !changedProperties.isEmpty {
             notifyExtensionTabChanged(changedProperties, tab: tab)
