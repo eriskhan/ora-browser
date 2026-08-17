@@ -11,6 +11,8 @@ enum OraMozillaCompatibilityScript {
             .replacingOccurrences(of: "__ORA_BUILD_ID__", with: buildID)
     }
 
+    // The template is JavaScript, not Swift. Keep SwiftFormat from rewriting its contents.
+    // swiftformat:disable all
     private static let template = #"""
 (() => {
     if (globalThis.__oraMozillaCompatibilityInstalled) return;
@@ -235,4 +237,5 @@ enum OraMozillaCompatibilityScript {
     }
 })();
 """#
+    // swiftformat:enable all
 }
