@@ -54,6 +54,20 @@ struct BrowserNavigationAction {
     let transition: BrowserHistoryTransition
     let referringURL: URL?
     let isMainFrame: Bool
+
+    init(
+        request: URLRequest,
+        modifierFlags: NSEvent.ModifierFlags,
+        transition: BrowserHistoryTransition = .typed,
+        referringURL: URL? = nil,
+        isMainFrame: Bool = true
+    ) {
+        self.request = request
+        self.modifierFlags = modifierFlags
+        self.transition = transition
+        self.referringURL = referringURL
+        self.isMainFrame = isMainFrame
+    }
 }
 
 enum BrowserNavigationActionDisposition {
