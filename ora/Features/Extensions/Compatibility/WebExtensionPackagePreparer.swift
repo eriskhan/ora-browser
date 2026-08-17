@@ -5,7 +5,7 @@ struct PreparedWebExtensionPackage {
     let resourceURL: URL
 }
 
-struct WebExtensionPackagePreparer {
+enum WebExtensionPackagePreparer {
     enum PreparationError: LocalizedError {
         case missingManifest
         case invalidManifest
@@ -63,7 +63,10 @@ struct WebExtensionPackagePreparer {
         patchContentScripts(in: &manifest)
         try patchExtensionHTMLFiles(rootURL: rootURL)
 
-        let updatedManifest = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+        let updatedManifest = try JSONSerialization.data(
+            withJSONObject: manifest,
+            options: [.prettyPrinted, .sortedKeys]
+        )
         try updatedManifest.write(to: manifestURL, options: .atomic)
         return PreparedWebExtensionPackage(resourceURL: rootURL)
     }
@@ -101,7 +104,9 @@ struct WebExtensionPackagePreparer {
             let wrapper: String
 
             if isModule {
-                let compatibilityLiteral = jsonStringLiteral(moduleSpecifier(for: OraMozillaCompatibilityScript.fileName))
+                let compatibilityLiteral = jsonStringLiteral(
+                    moduleSpecifier(for: OraMozillaCompatibilityScript.fileName)
+                )
                 wrapper = "import \(compatibilityLiteral);\nimport \(workerLiteral);\n"
             } else {
                 wrapper = OraMozillaCompatibilityScript.source + "\nimportScripts(\(workerLiteral));\n"
