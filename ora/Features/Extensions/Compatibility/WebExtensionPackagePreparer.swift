@@ -23,6 +23,7 @@ enum WebExtensionPackagePreparer {
         }
     }
 
+    static let internalBridgePermission = "nativeMessaging"
     private static let bridgeWorkerFileName = "__ora_mozilla_background.js"
 
     static func prepare(resourceURL: URL, installDirectory: URL) throws -> PreparedWebExtensionPackage {
@@ -59,6 +60,7 @@ enum WebExtensionPackagePreparer {
             encoding: .utf8
         )
 
+        patchInternalBridgePermission(in: &manifest)
         try patchBackground(in: &manifest, rootURL: rootURL)
         patchContentScripts(in: &manifest)
         try patchExtensionHTMLFiles(rootURL: rootURL)
@@ -92,6 +94,13 @@ enum WebExtensionPackagePreparer {
             }
         }
         throw PreparationError.missingManifest
+    }
+
+    private static func patchInternalBridgePermission(in manifest: inout [String: Any]) {
+        var permissions = manifest["permissions"] as? [String] ?? []
+        guard !permissions.contains(internalBridgePermission) else { return }
+        permissions.append(internalBridgePermission)
+        manifest["permissions"] = permissions
     }
 
     private static func patchBackground(in manifest: inout [String: Any], rootURL: URL) throws {
