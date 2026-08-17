@@ -269,6 +269,14 @@ enum OraMozillaNativeNamespaceScript {
         });
     }
 
+    if (!root.find && hasPermission("find")) {
+        defineIfMissing("find", {
+            find: (queryPhrase, options = {}) => nativeCall("find", "find", [queryPhrase, options]),
+            highlightResults: (options = {}) => nativeCall("find", "highlightResults", [options]),
+            removeHighlighting: () => nativeCall("find", "removeHighlighting")
+        });
+    }
+
     if (!root.idle && hasPermission("idle")) {
         defineIfMissing("idle", {
             queryState: (detectionIntervalInSeconds) => nativeCall(
