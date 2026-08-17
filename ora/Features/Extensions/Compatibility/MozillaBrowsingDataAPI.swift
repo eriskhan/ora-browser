@@ -251,10 +251,25 @@ enum MozillaBrowsingDataAPI {
         }
 
         let descriptor = FetchDescriptor<Download>()
-        for download in try tabManager.modelContext.fetch(descriptor) where download.createdAt >= since {
+        let removed = try tabManager.modelContext.fetch(descriptor).filter {
+            $0.createdAt >= since && $0.status != .downloading && $0.status != .pending
+        }
+        for download in removed {
             tabManager.modelContext.delete(download)
         }
         try tabManager.modelContext.save()
+        for download in removed {
+            MozillaDownloadsAPI.didErase(download)
+        }
+
+        var seenManagers = Set<ObjectIdentifier>()
+        for manager in tabManager.containers
+            .flatMap(\.tabs)
+            .compactMap(\.downloadManager)
+        {
+            guard seenManagers.insert(ObjectIdentifier(manager)).inserted else { continue }
+            manager.reloadDownloadsForExtensionAPI()
+        }
     }
 
     private static func clearPasswords(since: Date, containerID: UUID?) throws {
