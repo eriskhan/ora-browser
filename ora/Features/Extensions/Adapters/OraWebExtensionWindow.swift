@@ -5,20 +5,12 @@ import Foundation
 @MainActor
 final class OraWebExtensionWindow: NSObject, WKWebExtensionWindow {
     weak var tabManager: TabManager?
-    weak var downloadManager: DownloadManager?
     weak var window: NSWindow?
     weak var owner: ExtensionManager?
     let isPrivateWindow: Bool
 
-    init(
-        tabManager: TabManager,
-        downloadManager: DownloadManager,
-        window: NSWindow?,
-        isPrivate: Bool,
-        owner: ExtensionManager
-    ) {
+    init(tabManager: TabManager, window: NSWindow?, isPrivate: Bool, owner: ExtensionManager) {
         self.tabManager = tabManager
-        self.downloadManager = downloadManager
         self.window = window
         self.owner = owner
         self.isPrivateWindow = isPrivate
