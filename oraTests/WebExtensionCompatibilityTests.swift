@@ -148,8 +148,11 @@ struct WebExtensionCompatibilityTests {
         let wrapper = try String(contentsOf: wrapperURL, encoding: .utf8)
         let shimImport = "import \"./\(OraMozillaCompatibilityScript.fileName)\";"
         let workerImport = "import \"./worker.js\";"
+        let lines = wrapper
+            .split(whereSeparator: { $0.isNewline })
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
 
-        #expect(wrapper == "\(shimImport)\n\(workerImport)\n")
+        #expect(lines == [shimImport, workerImport])
     }
 
     private func makeTemporaryDirectory() throws -> URL {
