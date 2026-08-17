@@ -25,6 +25,24 @@ enum OraMozillaCompatibilityScript {
     const ORA_NATIVE_APPLICATION = "com.orabrowser.ora.mozilla";
     const ORA_ORIGINAL_NATIVE_MESSAGING = __ORA_ORIGINAL_NATIVE_MESSAGING__;
     const ORA_ORIGINAL_PERMISSIONS = new Set(__ORA_ORIGINAL_PERMISSIONS__);
+    const ORA_REQUIRED_PERMISSIONS = new Set(__ORA_REQUIRED_PERMISSIONS__);
+    const ORA_OPTIONAL_PERMISSIONS = new Set(__ORA_OPTIONAL_PERMISSIONS__);
+    const ORA_NATIVE_BRIDGE_PERMISSIONS = new Set([
+        "browserSettings",
+        "browsingData",
+        "contextualIdentities",
+        "cookies",
+        "dns",
+        "downloads",
+        "downloads.open",
+        "find",
+        "history",
+        "idle",
+        "management",
+        "privacy",
+        "search",
+        "topSites"
+    ]);
     const eventListeners = new Map();
     let eventPort;
     let generatedContentScriptID = 0;
@@ -61,7 +79,7 @@ enum OraMozillaCompatibilityScript {
         }
     }
 
-    async function nativeCall(namespace, method, args = []) {
+    async function rawNativeCall(namespace, method, args = []) {
         if (!root.runtime || typeof root.runtime.sendNativeMessage !== "function") {
             throw new Error(`Ora native compatibility transport is unavailable for browser.${namespace}.${method}`);
         }
@@ -75,6 +93,22 @@ enum OraMozillaCompatibilityScript {
             throw new Error(response && response.error ? response.error : `Ora failed browser.${namespace}.${method}`);
         }
         return response.value === null ? undefined : response.value;
+    }
+
+    const requiredNativeBridgePermissions = Array.from(ORA_REQUIRED_PERMISSIONS).filter(
+        (permission) => ORA_NATIVE_BRIDGE_PERMISSIONS.has(permission)
+    );
+    const isWebContentContext = typeof location !== "undefined" &&
+        (location.protocol === "http:" || location.protocol === "https:");
+    globalThis.__oraMozillaPermissionsReady = isWebContentContext
+        ? Promise.resolve(true)
+        : rawNativeCall("permissions", "ensureRequired", [requiredNativeBridgePermissions]).catch(() => false);
+
+    async function nativeCall(namespace, method, args = []) {
+        if (namespace !== "permissions" && globalThis.__oraMozillaPermissionsReady) {
+            await globalThis.__oraMozillaPermissionsReady;
+        }
+        return rawNativeCall(namespace, method, args);
     }
 
     function eventKey(namespace, event) {
@@ -178,30 +212,68 @@ enum OraMozillaCompatibilityScript {
         } catch (_error) {}
     }
 
-    if (!ORA_ORIGINAL_NATIVE_MESSAGING && root.permissions) {
+    if (root.permissions) {
         const permissions = root.permissions;
         const originalGetAll = typeof permissions.getAll === "function" ? permissions.getAll.bind(permissions) : undefined;
         const originalContains = typeof permissions.contains === "function" ? permissions.contains.bind(permissions) : undefined;
         const originalRequest = typeof permissions.request === "function" ? permissions.request.bind(permissions) : undefined;
         const originalRemove = typeof permissions.remove === "function" ? permissions.remove.bind(permissions) : undefined;
-        const withoutBridgePermission = (values) => (values || []).filter((value) => value !== "nativeMessaging");
-        const stripQuery = (query = {}) => ({ ...query, permissions: withoutBridgePermission(query.permissions) });
+        const visiblePermissions = (values) => ORA_ORIGINAL_NATIVE_MESSAGING
+            ? (values || [])
+            : (values || []).filter((value) => value !== "nativeMessaging");
 
-        if (originalGetAll) {
-            permissions.getAll = async () => {
-                const result = await originalGetAll();
-                return { ...result, permissions: withoutBridgePermission(result.permissions) };
+        function splitPermissionQuery(query = {}) {
+            const requested = visiblePermissions(query.permissions);
+            const bridge = requested.filter((permission) => ORA_NATIVE_BRIDGE_PERMISSIONS.has(permission));
+            const webkit = requested.filter((permission) => !ORA_NATIVE_BRIDGE_PERMISSIONS.has(permission));
+            return {
+                bridge,
+                webkit,
+                origins: Array.isArray(query.origins) ? query.origins : []
             };
         }
-        if (originalContains) {
-            permissions.contains = (query) => originalContains(stripQuery(query));
+
+        async function callWebKitPermissionMethod(method, split) {
+            if (!method) return true;
+            if (split.webkit.length === 0 && split.origins.length === 0) return true;
+            return Boolean(await method({ permissions: split.webkit, origins: split.origins }));
         }
-        if (originalRequest) {
-            permissions.request = (query) => originalRequest(stripQuery(query));
-        }
-        if (originalRemove) {
-            permissions.remove = (query) => originalRemove(stripQuery(query));
-        }
+
+        permissions.getAll = async () => {
+            const webkit = originalGetAll ? await originalGetAll() : { permissions: [], origins: [] };
+            const bridged = await nativeCall("permissions", "getAll");
+            return {
+                ...webkit,
+                permissions: Array.from(new Set([
+                    ...visiblePermissions(webkit.permissions),
+                    ...(Array.isArray(bridged) ? bridged : [])
+                ]))
+            };
+        };
+
+        permissions.contains = async (query = {}) => {
+            const split = splitPermissionQuery(query);
+            const bridgeAllowed = split.bridge.length === 0 ||
+                await nativeCall("permissions", "contains", [split.bridge]);
+            if (!bridgeAllowed) return false;
+            return callWebKitPermissionMethod(originalContains, split);
+        };
+
+        permissions.request = async (query = {}) => {
+            const split = splitPermissionQuery(query);
+            const webkitAllowed = await callWebKitPermissionMethod(originalRequest, split);
+            if (!webkitAllowed) return false;
+            if (split.bridge.length === 0) return true;
+            return Boolean(await nativeCall("permissions", "request", [split.bridge]));
+        };
+
+        permissions.remove = async (query = {}) => {
+            const split = splitPermissionQuery(query);
+            const webkitRemoved = await callWebKitPermissionMethod(originalRemove, split);
+            if (!webkitRemoved) return false;
+            if (split.bridge.length === 0) return true;
+            return Boolean(await nativeCall("permissions", "remove", [split.bridge]));
+        };
     }
 
     if (!root.history && hasOriginalPermission("history")) {
@@ -257,7 +329,8 @@ enum OraMozillaCompatibilityScript {
                 {
                     query: properties && properties.text,
                     disposition: properties && properties.disposition,
-                    tabId: properties && properties.tabId
+                    tabId: properties && properties.tabId,
+                    engine: properties && properties.engine
                 },
                 "CURRENT_TAB"
             )
