@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Darwin
 import Foundation
 import SwiftData
@@ -11,6 +12,7 @@ final class MozillaNativeAPIBridge {
 
     enum BridgeError: LocalizedError {
         case invalidMessage
+        case permissionDenied(String)
         case unsupportedNamespace(String)
         case unsupportedMethod(String, String)
         case unavailableBrowserWindow
@@ -21,6 +23,8 @@ final class MozillaNativeAPIBridge {
             switch self {
             case .invalidMessage:
                 return "Ora received an invalid Mozilla compatibility bridge message."
+            case let .permissionDenied(permission):
+                return "The extension does not have the \(permission) permission."
             case let .unsupportedNamespace(namespace):
                 return "Ora does not implement browser.\(namespace) through the native compatibility bridge."
             case let .unsupportedMethod(namespace, method):
@@ -35,18 +39,31 @@ final class MozillaNativeAPIBridge {
         }
     }
 
-    private var ports: [ObjectIdentifier: WKWebExtension.MessagePort] = [:]
+    private struct PortRegistration {
+        let port: WKWebExtension.MessagePort
+        let context: WKWebExtensionContext
+    }
+
+    private struct TopSiteSnapshot {
+        let url: URL
+        let title: String
+        let faviconLocalFile: URL?
+        let visitCount: Int
+        let lastAccessedAt: Date
+    }
+
+    private var ports: [ObjectIdentifier: PortRegistration] = [:]
     private let searchEngineService = SearchEngineService()
 
     private init() {}
 
-    func connect(port: WKWebExtension.MessagePort) throws {
+    func connect(port: WKWebExtension.MessagePort, context: WKWebExtensionContext) throws {
         guard port.applicationIdentifier == Self.applicationIdentifier else {
             throw BridgeError.invalidMessage
         }
 
         let key = ObjectIdentifier(port)
-        ports[key] = port
+        ports[key] = PortRegistration(port: port, context: context)
         port.disconnectHandler = { [weak self, weak port] _ in
             guard let self, let port else { return }
             self.ports.removeValue(forKey: ObjectIdentifier(port))
@@ -61,9 +78,13 @@ final class MozillaNativeAPIBridge {
             "args": arguments
         ]
 
-        for (key, port) in ports {
+        for (key, registration) in ports {
+            let port = registration.port
             guard !port.isDisconnected else {
                 ports.removeValue(forKey: key)
+                continue
+            }
+            guard ExtensionManager.shared.hasBridgeAccess(to: namespace, for: registration.context) else {
                 continue
             }
             port.sendMessage(message) { [weak self, weak port] error in
@@ -86,6 +107,12 @@ final class MozillaNativeAPIBridge {
             throw BridgeError.invalidMessage
         }
 
+        if let permission = requiredPermission(for: namespace),
+           !manager.hasBridgeAccess(to: permission, for: extensionContext)
+        {
+            throw BridgeError.permissionDenied(permission)
+        }
+
         let arguments = payload["args"] as? [Any] ?? []
         switch namespace {
         case "history":
@@ -96,6 +123,15 @@ final class MozillaNativeAPIBridge {
             return try handleSearch(method: method, arguments: arguments, context: extensionContext)
         default:
             throw BridgeError.unsupportedNamespace(namespace)
+        }
+    }
+
+    private func requiredPermission(for namespace: String) -> String? {
+        switch namespace {
+        case "history", "topSites", "search":
+            return namespace
+        default:
+            return nil
         }
     }
 
@@ -158,11 +194,7 @@ final class MozillaNativeAPIBridge {
             let title = details["title"] as? String ?? url.host ?? url.absoluteString
             let transition = details["transition"] as? String ?? "link"
             let visitDate = date(milliseconds: details["visitTime"]) ?? Date()
-            let history = try historyEntry(
-                for: url,
-                container: container,
-                modelContext: modelContext
-            )
+            let history = try historyEntry(for: url, container: container, modelContext: modelContext)
             let visit: HistoryVisitRecord
             if let history {
                 history.title = title
@@ -289,8 +321,8 @@ final class MozillaNativeAPIBridge {
         let onePerDomain = options["onePerDomain"] as? Bool ?? true
         let newTab = options["newtab"] as? Bool ?? false
 
-        // Ora's new-tab surface does not render a Top Sites grid. Returning an empty
-        // list for `newtab` is therefore the truthful representation of that surface.
+        // Ora currently has no Top Sites grid on the new-tab surface. In Firefox,
+        // newtab=true specifically requests that surface, so its truthful result is empty.
         if newTab {
             return [Any]()
         }
@@ -298,7 +330,7 @@ final class MozillaNativeAPIBridge {
         let tabManager = try tabManager(for: context)
         let descriptor = FetchDescriptor<History>(sortBy: [SortDescriptor(\.visitCount, order: .reverse)])
         let histories = try tabManager.modelContext.fetch(descriptor)
-        let merged = mergeHistoryRecords(histories)
+        let merged = topSiteSnapshots(histories)
             .sorted { lhs, rhs in
                 if lhs.visitCount != rhs.visitCount {
                     return lhs.visitCount > rhs.visitCount
@@ -423,12 +455,17 @@ final class MozillaNativeAPIBridge {
         }
     }
 
-    private func mergeHistoryRecords(_ histories: [History]) -> [History] {
+    private func topSiteSnapshots(_ histories: [History]) -> [TopSiteSnapshot] {
         let grouped = Dictionary(grouping: histories, by: \.urlString)
         return grouped.values.compactMap { entries in
             guard let latest = entries.max(by: { $0.lastAccessedAt < $1.lastAccessedAt }) else { return nil }
-            latest.visitCount = entries.reduce(0) { $0 + $1.visitCount }
-            return latest
+            return TopSiteSnapshot(
+                url: latest.url,
+                title: latest.title,
+                faviconLocalFile: latest.faviconLocalFile,
+                visitCount: entries.reduce(0) { $0 + $1.visitCount },
+                lastAccessedAt: latest.lastAccessedAt
+            )
         }
     }
 
@@ -449,7 +486,8 @@ final class MozillaNativeAPIBridge {
     }
 
     private func historyItemIdentifier(for url: String) -> String {
-        String(url.hashValue)
+        let digest = SHA256.hash(data: Data(url.utf8))
+        return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
     private func milliseconds(_ date: Date) -> Double {
