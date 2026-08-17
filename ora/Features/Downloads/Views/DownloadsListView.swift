@@ -221,31 +221,29 @@ struct DownloadContextMenu: View {
     @EnvironmentObject var downloadManager: DownloadManager
 
     var body: some View {
-        Group {
-            if download.status == .completed {
-                Button("Show in Finder") {
-                    downloadManager.openDownloadInFinder(download)
-                }
-
-                Button("Copy Path") {
-                    if let path = download.destinationURL?.path {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(path, forType: .string)
-                    }
-                }
+        if download.status == .completed {
+            Button("Show in Finder") {
+                downloadManager.openDownloadInFinder(download)
             }
 
-            if download.status == .downloading {
-                Button("Cancel Download") {
-                    downloadManager.cancelDownload(download)
+            Button("Copy Path") {
+                if let path = download.destinationURL?.path {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(path, forType: .string)
                 }
             }
+        }
 
-            Divider()
-
-            Button("Remove from List") {
-                downloadManager.deleteDownload(download)
+        if download.status == .downloading {
+            Button("Cancel Download") {
+                downloadManager.cancelDownload(download)
             }
+        }
+
+        Divider()
+
+        Button("Remove from List") {
+            downloadManager.deleteDownload(download)
         }
     }
 }

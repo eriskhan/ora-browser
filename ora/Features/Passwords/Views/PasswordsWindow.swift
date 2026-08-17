@@ -162,7 +162,11 @@ private struct PasswordsWindowView: View {
         }
         .alert("Delete saved password?", isPresented: Binding(
             get: { pendingDelete != nil },
-            set: { if !$0 { pendingDelete = nil } }
+            set: {
+                if !$0 {
+                    pendingDelete = nil
+                }
+            }
         )) {
             Button("Delete", role: .destructive) {
                 if let pendingDelete {

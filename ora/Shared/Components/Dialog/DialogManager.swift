@@ -66,7 +66,9 @@ final class DialogManager: ObservableObject {
             onConfirm()
         }
         dialog.onDismiss = {
-            if !state.confirmed { onCancel?() }
+            if !state.confirmed {
+                onCancel?()
+            }
         }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
             dialogs.append(dialog)

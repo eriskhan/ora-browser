@@ -204,7 +204,9 @@ class Tab: ObservableObject, Identifiable {
         isPrivate: Bool
     ) {
         // Avoid double initialization
-        if browserPage != nil { return }
+        if browserPage != nil {
+            return
+        }
 
         if passwordCoordinator == nil {
             passwordCoordinator = PasswordAutofillCoordinator(tab: self)
@@ -232,7 +234,11 @@ class Tab: ObservableObject, Identifiable {
         self.syncBackgroundColorFromHex()
         // Load after a short delay to ensure layout
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
-            let url = if self.type != .normal { self.savedURL } else { self.url }
+            let url = if self.type != .normal {
+                self.savedURL
+            } else {
+                self.url
+            }
             page.load(URLRequest(url: url ?? self.url))
             self.isWebViewReady = true
         }

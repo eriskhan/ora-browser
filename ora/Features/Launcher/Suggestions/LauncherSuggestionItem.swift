@@ -15,11 +15,15 @@ struct LauncherSuggestionItem: View {
 
     private var shouldShowURL: Bool {
         guard let url = suggestion.url else { return false }
-        if isAIChat || suggestion.type == .suggestedQuery || suggestion.type == .openedTab { return false }
+        if isAIChat || suggestion.type == .suggestedQuery || suggestion.type == .openedTab {
+            return false
+        }
         let urlString = url.absoluteString
         if suggestion.title == urlString || urlString.hasSuffix("://\(suggestion.title)") || urlString
             .hasSuffix("://\(suggestion.title)/")
-        { return false }
+        {
+            return false
+        }
         return true
     }
 
@@ -35,7 +39,9 @@ struct LauncherSuggestionItem: View {
     }
 
     private var backgroundColor: Color {
-        if focusedElement != suggestion.id || isHovered { return .clear }
+        if focusedElement != suggestion.id || isHovered {
+            return .clear
+        }
         return isAIChat ? theme.background : theme.foreground.opacity(0.1)
     }
 

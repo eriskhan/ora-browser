@@ -59,7 +59,9 @@ final class MediaController: ObservableObject {
         let id = tab.id
 
         func ensureSession() -> Int {
-            if let idx = sessions.firstIndex(where: { $0.tabID == id }) { return idx }
+            if let idx = sessions.firstIndex(where: { $0.tabID == id }) {
+                return idx
+            }
             let session = Session(
                 tabID: id,
                 title: tab.title,
@@ -83,12 +85,17 @@ final class MediaController: ObservableObject {
             sessions[idx].isPlaying = playing
             // Update tab's isPlayingMedia property
             tabRefs[tab.id]?.value?.isPlayingMedia = playing
-            if let vol = event.volume { sessions[idx].volume = clamp(vol) }
+            if let vol = event.volume {
+                sessions[idx].volume = clamp(vol)
+            }
             // Update recency when it starts playing
-            if playing { sessions[idx].lastActive = Date()
+            if playing {
+                sessions[idx].lastActive = Date()
                 moveToFront(index: idx)
             }
-            if let wasPlayed = event.wasPlayed { sessions[idx].wasPlayed = wasPlayed }
+            if let wasPlayed = event.wasPlayed {
+                sessions[idx].wasPlayed = wasPlayed
+            }
 //        case "ready":
             // Session is already ensured in other cases
 
@@ -150,7 +157,9 @@ final class MediaController: ObservableObject {
     func setVolume(for tabID: UUID? = nil, _ value: Double) {
         guard let id = tabID ?? primary?.tabID else { return }
         let clampedVolume = clamp(value)
-        if let idx = sessions.firstIndex(where: { $0.tabID == id }) { sessions[idx].volume = clampedVolume }
+        if let idx = sessions.firstIndex(where: { $0.tabID == id }) {
+            sessions[idx].volume = clampedVolume
+        }
         eval(id, "window.__oraMedia && window.__oraMedia.setVolume && window.__oraMedia.setVolume(\(clampedVolume))")
     }
 

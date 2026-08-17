@@ -189,7 +189,9 @@ public struct Split<P: View, D: SplitDivider, S: View>: View {
         let newLength = horizontal ? size.width : size.height
         let delta = newLength - oldLength
         self.oldSize = size  // Retain even if delta might be zero because layout might change
-        if delta == 0 { return }
+        if delta == 0 {
+            return
+        }
         let oldPLength = constrainedFraction * oldLength
         // If holding the primary side constant, the pLength doesn't change
         let newPLength = side.isPrimary ? oldPLength : oldPLength + delta
