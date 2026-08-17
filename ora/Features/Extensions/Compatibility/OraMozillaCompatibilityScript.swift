@@ -22,6 +22,10 @@ enum OraMozillaCompatibilityScript {
     if (!root) return;
     if (!globalThis.browser) globalThis.browser = root;
 
+    const ORA_NATIVE_APPLICATION = "com.orabrowser.ora.mozilla";
+    const ORA_ORIGINAL_NATIVE_MESSAGING = __ORA_ORIGINAL_NATIVE_MESSAGING__;
+    const eventListeners = new Map();
+    let eventPort;
     let generatedContentScriptID = 0;
     let generatedLegacyUserScriptID = 0;
     const registeredUserScriptIDs = new Set();
@@ -50,6 +54,91 @@ enum OraMozillaCompatibilityScript {
         } catch (error) {
             return Promise.reject(error);
         }
+    }
+
+    async function nativeCall(namespace, method, args = []) {
+        if (!root.runtime || typeof root.runtime.sendNativeMessage !== "function") {
+            throw new Error(`Ora native compatibility transport is unavailable for browser.${namespace}.${method}`);
+        }
+        const response = await root.runtime.sendNativeMessage(ORA_NATIVE_APPLICATION, {
+            ora: "mozilla-api",
+            namespace,
+            method,
+            args
+        });
+        if (!response || response.ok !== true) {
+            throw new Error(response && response.error ? response.error : `Ora failed browser.${namespace}.${method}`);
+        }
+        return response.value === null ? undefined : response.value;
+    }
+
+    function eventKey(namespace, event) {
+        return `${namespace}.${event}`;
+    }
+
+    function ensureEventPort() {
+        if (eventPort || !root.runtime || typeof root.runtime.connectNative !== "function") return;
+        try {
+            eventPort = root.runtime.connectNative(ORA_NATIVE_APPLICATION);
+            eventPort.onMessage.addListener((message) => {
+                if (!message || message.ora !== "mozilla-event") return;
+                const listeners = eventListeners.get(eventKey(message.namespace, message.event));
+                if (!listeners) return;
+                for (const listener of Array.from(listeners)) {
+                    try { listener(...(Array.isArray(message.args) ? message.args : [])); } catch (_error) {}
+                }
+            });
+            eventPort.onDisconnect.addListener(() => {
+                eventPort = undefined;
+                if (Array.from(eventListeners.values()).some((listeners) => listeners.size > 0)) {
+                    queueMicrotask(ensureEventPort);
+                }
+            });
+        } catch (_error) {
+            eventPort = undefined;
+        }
+    }
+
+    function nativeEvent(namespace, event) {
+        const key = eventKey(namespace, event);
+        if (!eventListeners.has(key)) eventListeners.set(key, new Set());
+        const listeners = eventListeners.get(key);
+        return {
+            addListener(listener) {
+                if (typeof listener !== "function") throw new TypeError("Listener must be a function");
+                listeners.add(listener);
+                ensureEventPort();
+            },
+            removeListener(listener) {
+                listeners.delete(listener);
+            },
+            hasListener(listener) {
+                return listeners.has(listener);
+            },
+            hasListeners() {
+                return listeners.size > 0;
+            }
+        };
+    }
+
+    function milliseconds(value) {
+        if (value instanceof Date) return value.getTime();
+        return value;
+    }
+
+    function normalizeHistoryQuery(query = {}) {
+        return {
+            ...query,
+            startTime: milliseconds(query.startTime),
+            endTime: milliseconds(query.endTime)
+        };
+    }
+
+    function normalizeHistoryAdd(details = {}) {
+        return {
+            ...details,
+            visitTime: milliseconds(details.visitTime)
+        };
     }
 
     if (root.action) {
@@ -82,6 +171,92 @@ enum OraMozillaCompatibilityScript {
                 buildID: "__ORA_BUILD_ID__"
             });
         } catch (_error) {}
+    }
+
+    if (!ORA_ORIGINAL_NATIVE_MESSAGING && root.permissions) {
+        const permissions = root.permissions;
+        const originalGetAll = typeof permissions.getAll === "function" ? permissions.getAll.bind(permissions) : undefined;
+        const originalContains = typeof permissions.contains === "function" ? permissions.contains.bind(permissions) : undefined;
+        const originalRequest = typeof permissions.request === "function" ? permissions.request.bind(permissions) : undefined;
+        const originalRemove = typeof permissions.remove === "function" ? permissions.remove.bind(permissions) : undefined;
+        const withoutBridgePermission = (values) => (values || []).filter((value) => value !== "nativeMessaging");
+        const stripQuery = (query = {}) => ({ ...query, permissions: withoutBridgePermission(query.permissions) });
+
+        if (originalGetAll) {
+            permissions.getAll = async () => {
+                const result = await originalGetAll();
+                return { ...result, permissions: withoutBridgePermission(result.permissions) };
+            };
+        }
+        if (originalContains) {
+            permissions.contains = (query) => originalContains(stripQuery(query));
+        }
+        if (originalRequest) {
+            permissions.request = (query) => originalRequest(stripQuery(query));
+        }
+        if (originalRemove) {
+            permissions.remove = (query) => originalRemove(stripQuery(query));
+        }
+    }
+
+    if (!root.history) {
+        defineIfMissing("history", {
+            search: (query) => nativeCall("history", "search", [normalizeHistoryQuery(query)]),
+            getVisits: (details) => nativeCall("history", "getVisits", [details || {}]),
+            addUrl: (details) => nativeCall("history", "addUrl", [normalizeHistoryAdd(details)]),
+            deleteUrl: (details) => nativeCall("history", "deleteUrl", [details || {}]),
+            deleteRange: (range) => nativeCall("history", "deleteRange", [{
+                ...range,
+                startTime: milliseconds(range && range.startTime),
+                endTime: milliseconds(range && range.endTime)
+            }]),
+            deleteAll: () => nativeCall("history", "deleteAll"),
+            onVisited: nativeEvent("history", "onVisited"),
+            onVisitRemoved: nativeEvent("history", "onVisitRemoved"),
+            onTitleChanged: nativeEvent("history", "onTitleChanged")
+        });
+    }
+
+    if (!root.topSites) {
+        defineIfMissing("topSites", {
+            get: (options = {}) => nativeCall("topSites", "get", [options])
+        });
+    }
+
+    if (!root.search) {
+        async function performSearch(properties, defaultDisposition) {
+            const details = properties || {};
+            if (details.tabId !== undefined && details.disposition !== undefined) {
+                throw new TypeError("browser.search cannot use tabId and disposition together");
+            }
+            const url = await nativeCall("search", "buildURL", [details]);
+            if (details.tabId !== undefined) {
+                await root.tabs.update(details.tabId, { url });
+                return;
+            }
+
+            const disposition = details.disposition || defaultDisposition;
+            if (disposition === "CURRENT_TAB") {
+                await root.tabs.update({ url });
+            } else if (disposition === "NEW_WINDOW") {
+                await root.windows.create({ url });
+            } else {
+                await root.tabs.create({ url });
+            }
+        }
+
+        defineIfMissing("search", {
+            get: () => nativeCall("search", "get"),
+            search: (properties) => performSearch(properties, "NEW_TAB"),
+            query: (properties) => performSearch(
+                {
+                    query: properties && properties.text,
+                    disposition: properties && properties.disposition,
+                    tabId: properties && properties.tabId
+                },
+                "CURRENT_TAB"
+            )
+        });
     }
 
     if (!root.clipboard && typeof navigator !== "undefined" && navigator.clipboard) {
