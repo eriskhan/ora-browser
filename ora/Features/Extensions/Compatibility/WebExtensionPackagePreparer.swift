@@ -26,9 +26,10 @@ enum WebExtensionPackagePreparer {
         }
     }
 
-    static let currentCompatibilityRevision = 2
+    static let currentCompatibilityRevision = 3
     static let internalBridgePermission = "nativeMessaging"
     private static let bridgeWorkerFileName = "__ora_mozilla_background.js"
+    private static let bridgeWorkerTargetFileName = "__ora_mozilla_background_target.txt"
 
     static func prepare(resourceURL: URL, installDirectory: URL) throws -> PreparedWebExtensionPackage {
         let rootURL: URL
@@ -115,15 +116,28 @@ enum WebExtensionPackagePreparer {
             .replacingOccurrences(of: "__ORA_ORIGINAL_PERMISSIONS__", with: encodedDeclaredPermissions)
             .replacingOccurrences(of: "__ORA_REQUIRED_PERMISSIONS__", with: encodedRequiredPermissions)
             .replacingOccurrences(of: "__ORA_OPTIONAL_PERMISSIONS__", with: encodedOptionalPermissions)
+        let nativeNamespaceSource = OraMozillaNativeNamespaceScript.source(
+            declaredPermissions: declaredPermissions
+        )
 
         try compatibilitySource.write(
             to: rootURL.appendingPathComponent(OraMozillaCompatibilityScript.fileName),
             atomically: true,
             encoding: .utf8
         )
+        try nativeNamespaceSource.write(
+            to: rootURL.appendingPathComponent(OraMozillaNativeNamespaceScript.fileName),
+            atomically: true,
+            encoding: .utf8
+        )
 
         patchInternalBridgePermission(in: &manifest)
-        try patchBackground(in: &manifest, rootURL: rootURL, compatibilitySource: compatibilitySource)
+        try patchBackground(
+            in: &manifest,
+            rootURL: rootURL,
+            compatibilitySource: compatibilitySource,
+            nativeNamespaceSource: nativeNamespaceSource
+        )
         patchContentScripts(in: &manifest)
         try patchExtensionHTMLFiles(rootURL: rootURL)
 
@@ -173,13 +187,19 @@ enum WebExtensionPackagePreparer {
     private static func patchBackground(
         in manifest: inout [String: Any],
         rootURL: URL,
-        compatibilitySource: String
+        compatibilitySource: String,
+        nativeNamespaceSource: String
     ) throws {
         guard var background = manifest["background"] as? [String: Any] else { return }
 
-        if let worker = background["service_worker"] as? String, !worker.isEmpty {
+        if let configuredWorker = background["service_worker"] as? String, !configuredWorker.isEmpty {
             let isModule = (background["type"] as? String)?.lowercased() == "module"
-            let workerPath = isModule ? moduleSpecifier(for: worker) : worker
+            let originalWorker = try recoverOriginalWorker(
+                configuredWorker: configuredWorker,
+                rootURL: rootURL,
+                isModule: isModule
+            )
+            let workerPath = isModule ? moduleSpecifier(for: originalWorker) : originalWorker
             let workerLiteral = jsonStringLiteral(workerPath)
             let wrapper: String
 
@@ -187,11 +207,20 @@ enum WebExtensionPackagePreparer {
                 let compatibilityLiteral = jsonStringLiteral(
                     moduleSpecifier(for: OraMozillaCompatibilityScript.fileName)
                 )
-                wrapper = "import \(compatibilityLiteral);\nimport \(workerLiteral);\n"
+                let nativeLiteral = jsonStringLiteral(
+                    moduleSpecifier(for: OraMozillaNativeNamespaceScript.fileName)
+                )
+                wrapper = "import \(compatibilityLiteral);\nimport \(nativeLiteral);\nimport \(workerLiteral);\n"
             } else {
-                wrapper = compatibilitySource + "\nimportScripts(\(workerLiteral));\n"
+                wrapper = compatibilitySource + "\n" + nativeNamespaceSource +
+                    "\nimportScripts(\(workerLiteral));\n"
             }
 
+            try originalWorker.write(
+                to: rootURL.appendingPathComponent(bridgeWorkerTargetFileName),
+                atomically: true,
+                encoding: .utf8
+            )
             try wrapper.write(
                 to: rootURL.appendingPathComponent(bridgeWorkerFileName),
                 atomically: true,
@@ -201,7 +230,11 @@ enum WebExtensionPackagePreparer {
         }
 
         if var scripts = background["scripts"] as? [String] {
-            scripts.removeAll { $0 == OraMozillaCompatibilityScript.fileName }
+            scripts.removeAll {
+                $0 == OraMozillaCompatibilityScript.fileName ||
+                    $0 == OraMozillaNativeNamespaceScript.fileName
+            }
+            scripts.insert(OraMozillaNativeNamespaceScript.fileName, at: 0)
             scripts.insert(OraMozillaCompatibilityScript.fileName, at: 0)
             background["scripts"] = scripts
         }
@@ -209,11 +242,69 @@ enum WebExtensionPackagePreparer {
         manifest["background"] = background
     }
 
+    private static func recoverOriginalWorker(
+        configuredWorker: String,
+        rootURL: URL,
+        isModule: Bool
+    ) throws -> String {
+        guard configuredWorker == bridgeWorkerFileName else { return configuredWorker }
+
+        let targetURL = rootURL.appendingPathComponent(bridgeWorkerTargetFileName)
+        if let stored = try? String(contentsOf: targetURL, encoding: .utf8), !stored.isEmpty {
+            return stored
+        }
+
+        let wrapperURL = rootURL.appendingPathComponent(bridgeWorkerFileName)
+        guard let wrapper = try? String(contentsOf: wrapperURL, encoding: .utf8),
+              let recovered = isModule
+                ? originalModuleWorker(from: wrapper)
+                : originalClassicWorker(from: wrapper)
+        else {
+            throw PreparationError.invalidManifest
+        }
+        return recovered
+    }
+
+    private static func originalModuleWorker(from wrapper: String) -> String? {
+        let shimNames = Set([
+            OraMozillaCompatibilityScript.fileName,
+            OraMozillaNativeNamespaceScript.fileName
+        ])
+        for rawLine in wrapper.split(whereSeparator: { $0.isNewline }).reversed() {
+            let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.hasPrefix("import "), line.hasSuffix(";") else { continue }
+            let literal = String(line.dropFirst("import ".count).dropLast())
+            guard let path = decodeJSONString(literal) else { continue }
+            let fileName = URL(fileURLWithPath: path).lastPathComponent
+            if !shimNames.contains(fileName), fileName != bridgeWorkerFileName {
+                return path
+            }
+        }
+        return nil
+    }
+
+    private static func originalClassicWorker(from wrapper: String) -> String? {
+        guard let start = wrapper.range(of: "importScripts(", options: .backwards) else { return nil }
+        let suffix = wrapper[start.upperBound...]
+        guard let end = suffix.firstIndex(of: ")") else { return nil }
+        let literal = String(suffix[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return decodeJSONString(literal)
+    }
+
+    private static func decodeJSONString(_ literal: String) -> String? {
+        guard let data = literal.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(String.self, from: data)
+    }
+
     private static func patchContentScripts(in manifest: inout [String: Any]) {
         guard var contentScripts = manifest["content_scripts"] as? [[String: Any]] else { return }
         for index in contentScripts.indices {
             var scripts = contentScripts[index]["js"] as? [String] ?? []
-            scripts.removeAll { $0 == OraMozillaCompatibilityScript.fileName }
+            scripts.removeAll {
+                $0 == OraMozillaCompatibilityScript.fileName ||
+                    $0 == OraMozillaNativeNamespaceScript.fileName
+            }
+            scripts.insert(OraMozillaNativeNamespaceScript.fileName, at: 0)
             scripts.insert(OraMozillaCompatibilityScript.fileName, at: 0)
             contentScripts[index]["js"] = scripts
         }
@@ -227,16 +318,21 @@ enum WebExtensionPackagePreparer {
             options: [.skipsHiddenFiles]
         ) else { return }
 
-        let tag = "<script src=\"/\(OraMozillaCompatibilityScript.fileName)\"></script>"
         for case let fileURL as URL in enumerator where fileURL.pathExtension.lowercased() == "html" {
-            guard var html = try? String(contentsOf: fileURL, encoding: .utf8),
-                  !html.contains(OraMozillaCompatibilityScript.fileName)
-            else { continue }
+            guard var html = try? String(contentsOf: fileURL, encoding: .utf8) else { continue }
+            var tags = ""
+            if !html.contains(OraMozillaCompatibilityScript.fileName) {
+                tags += "<script src=\"/\(OraMozillaCompatibilityScript.fileName)\"></script>"
+            }
+            if !html.contains(OraMozillaNativeNamespaceScript.fileName) {
+                tags += "<script src=\"/\(OraMozillaNativeNamespaceScript.fileName)\"></script>"
+            }
+            guard !tags.isEmpty else { continue }
 
             if let headRange = html.range(of: "</head>", options: [.caseInsensitive]) {
-                html.insert(contentsOf: tag, at: headRange.lowerBound)
+                html.insert(contentsOf: tags, at: headRange.lowerBound)
             } else {
-                html = tag + html
+                html = tags + html
             }
             try html.write(to: fileURL, atomically: true, encoding: .utf8)
         }
