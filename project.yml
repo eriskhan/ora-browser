@@ -15,12 +15,15 @@ packages:
   SafariConverterLib:
     url: https://github.com/AdguardTeam/SafariConverterLib
     exactVersion: 4.2.2
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation
+    exactVersion: 0.9.20
 
 targets:
   ora:
     type: application
     platform: "macOS"
-    deploymentTarget: "15.0"
+    deploymentTarget: "15.4"
     sources:
       - path: ora
         excludes:
@@ -35,6 +38,7 @@ targets:
       - package: FaviconFinder
       - package: SafariConverterLib
         product: ContentBlockerConverter
+      - package: ZIPFoundation
 
     preBuildScripts:
       - name: "Copy Icon Bundle"
@@ -88,7 +92,7 @@ targets:
               - public.xhtml
         NSUserActivityTypes:
           - NSUserActivityTypeBrowsingWeb
-        LSMinimumSystemVersion: "15.0"
+        LSMinimumSystemVersion: "15.4"
         LSApplicationCategoryType: public.app-category.web-browser
 
     entitlements:
@@ -148,7 +152,7 @@ targets:
   oraTests:
     type: bundle.unit-test
     platform: "macOS"
-    deploymentTarget: "15.0"
+    deploymentTarget: "15.4"
     sources:
       - path: oraTests
     dependencies:
