@@ -54,14 +54,21 @@ enum WebExtensionPackagePreparer {
             throw PreparationError.invalidManifest
         }
 
-        try OraMozillaCompatibilityScript.source.write(
+        let originalPermissions = manifest["permissions"] as? [String] ?? []
+        let originallyRequestedNativeMessaging = originalPermissions.contains(internalBridgePermission)
+        let compatibilitySource = OraMozillaCompatibilityScript.source.replacingOccurrences(
+            of: "__ORA_ORIGINAL_NATIVE_MESSAGING__",
+            with: originallyRequestedNativeMessaging ? "true" : "false"
+        )
+
+        try compatibilitySource.write(
             to: rootURL.appendingPathComponent(OraMozillaCompatibilityScript.fileName),
             atomically: true,
             encoding: .utf8
         )
 
         patchInternalBridgePermission(in: &manifest)
-        try patchBackground(in: &manifest, rootURL: rootURL)
+        try patchBackground(in: &manifest, rootURL: rootURL, compatibilitySource: compatibilitySource)
         patchContentScripts(in: &manifest)
         try patchExtensionHTMLFiles(rootURL: rootURL)
 
@@ -103,7 +110,11 @@ enum WebExtensionPackagePreparer {
         manifest["permissions"] = permissions
     }
 
-    private static func patchBackground(in manifest: inout [String: Any], rootURL: URL) throws {
+    private static func patchBackground(
+        in manifest: inout [String: Any],
+        rootURL: URL,
+        compatibilitySource: String
+    ) throws {
         guard var background = manifest["background"] as? [String: Any] else { return }
 
         if let worker = background["service_worker"] as? String, !worker.isEmpty {
@@ -118,7 +129,7 @@ enum WebExtensionPackagePreparer {
                 )
                 wrapper = "import \(compatibilityLiteral);\nimport \(workerLiteral);\n"
             } else {
-                wrapper = OraMozillaCompatibilityScript.source + "\nimportScripts(\(workerLiteral));\n"
+                wrapper = compatibilitySource + "\nimportScripts(\(workerLiteral));\n"
             }
 
             try wrapper.write(
