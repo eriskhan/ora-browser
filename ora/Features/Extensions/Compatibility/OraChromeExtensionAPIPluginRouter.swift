@@ -31,6 +31,15 @@ enum OraChromeExtensionAPIPluginRouter {
                     spaceID: spaceID
                 )
             )
+        case "userScripts":
+            return RoutedValue(
+                value: try await OraUserScriptsManager.shared.handle(
+                    method: method,
+                    args: args,
+                    spaceID: spaceID,
+                    context: context
+                )
+            )
         default:
             return nil
         }

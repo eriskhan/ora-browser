@@ -59,6 +59,8 @@ final class WebExtensionPermissionPrompter: NSObject, WKWebExtensionControllerDe
     }
 
     func tabDidBecomeAvailable(_ tab: Tab, controller: WKWebExtensionController) {
+        OraUserScriptsManager.shared.attachRegisteredScripts(to: tab, spaceID: tab.container.id)
+
         let identifier = ObjectIdentifier(tab)
         guard announcedTabs.insert(identifier).inserted else { return }
 
