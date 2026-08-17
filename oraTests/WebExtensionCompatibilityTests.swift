@@ -148,10 +148,8 @@ struct WebExtensionCompatibilityTests {
         let wrapper = try String(contentsOf: wrapperURL, encoding: .utf8)
         let shimImport = "import \"./\(OraMozillaCompatibilityScript.fileName)\";"
         let workerImport = "import \"./worker.js\";"
-        let shimRange = try #require(wrapper.range(of: shimImport))
-        let workerRange = try #require(wrapper.range(of: workerImport))
 
-        #expect(shimRange.lowerBound < workerRange.lowerBound)
+        #expect(wrapper == "\(shimImport)\n\(workerImport)\n")
     }
 
     private func makeTemporaryDirectory() throws -> URL {
