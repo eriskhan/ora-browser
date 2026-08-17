@@ -15,10 +15,6 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
     private var pendingLoadRequest: URLRequest?
     private var pendingReload = false
 
-    var websiteDataStore: WKWebsiteDataStore {
-        webView.configuration.websiteDataStore
-    }
-
     init(
         profile: BrowserEngineProfile,
         configuration: BrowserPageConfiguration,
@@ -83,71 +79,33 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
             layer.drawsAsynchronously = true
         }
 
-        configureObservers()
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    private func configureObservers() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(applicationDidBecomeActive),
-            name: NSApplication.didBecomeActiveNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(applicationDidResignActive),
-            name: NSApplication.didResignActiveNotification,
-            object: nil
-        )
-    }
-
-    @objc private func applicationDidBecomeActive() {
-        webView.setValue(false, forKey: "drawsBackground")
-    }
-
-    @objc private func applicationDidResignActive() {
-        webView.setValue(false, forKey: "drawsBackground")
-    }
-
-    func load(_ request: URLRequest) {
-        originalURL = request.url
-        guard isReadyForNavigation else {
-            pendingLoadRequest = request
-            return
+        BrowserPrivacyService.shared.prepareConfiguration(
+            webConfiguration,
+            spaceID: profile.identifier
+        ) { [weak self] in
+            self?.isReadyForNavigation = true
+            self?.flushPendingNavigationIfNeeded()
         }
-        webView.load(request)
     }
 
-    func reload() {
-        guard isReadyForNavigation else {
-            pendingReload = true
-            return
-        }
-        webView.reload()
+    var contentView: NSView {
+        webView
     }
 
-    func reloadFromOrigin() {
-        guard isReadyForNavigation else {
-            pendingReload = true
-            return
-        }
-        webView.reloadFromOrigin()
+    var webExtensionWebView: WKWebView {
+        webView
     }
 
-    func stopLoading() {
-        webView.stopLoading()
+    var window: NSWindow? {
+        webView.window
     }
 
-    func goBack() {
-        webView.goBack()
+    var currentURL: URL? {
+        webView.url
     }
 
-    func goForward() {
-        webView.goForward()
+    var title: String? {
+        webView.title
     }
 
     var canGoBack: Bool {
@@ -166,83 +124,140 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         webView.estimatedProgress
     }
 
-    var url: URL? {
-        webView.url
+    func load(_ request: URLRequest) {
+        guard isReadyForNavigation else {
+            pendingLoadRequest = request
+            pendingReload = false
+            return
+        }
+
+        webView.load(request)
     }
 
-    var title: String? {
-        webView.title
+    func reload() {
+        guard isReadyForNavigation else {
+            pendingReload = true
+            pendingLoadRequest = nil
+            return
+        }
+
+        webView.reload()
     }
 
-    func evaluateJavaScript(
-        _ javaScriptString: String,
-        completionHandler: ((Any?, Error?) -> Void)? = nil
-    ) {
-        webView.evaluateJavaScript(javaScriptString, completionHandler: completionHandler)
+    func goBack() {
+        webView.goBack()
+    }
+
+    func goForward() {
+        webView.goForward()
+    }
+
+    func stopLoading() {
+        webView.stopLoading()
+    }
+
+    func evaluateJavaScript(_ script: String, completion: ((Any?, Error?) -> Void)? = nil) {
+        webView.evaluateJavaScript(script, completionHandler: completion)
     }
 
     func takeSnapshot(
-        with configuration: WKSnapshotConfiguration? = nil,
-        completionHandler: @escaping (NSImage?, Error?) -> Void
+        configuration: BrowserSnapshotConfiguration,
+        completion: @escaping (NSImage?, Error?) -> Void
     ) {
-        webView.takeSnapshot(with: configuration, completionHandler: completionHandler)
+        let snapshotConfiguration = WKSnapshotConfiguration()
+        snapshotConfiguration.afterScreenUpdates = configuration.afterScreenUpdates
+        if let rect = configuration.rect {
+            snapshotConfiguration.rect = rect
+        }
+        webView.takeSnapshot(with: snapshotConfiguration, completionHandler: completion)
     }
 
-    func setFrame(_ frame: CGRect) {
-        webView.frame = frame
-    }
-
-    var frame: CGRect {
-        webView.frame
-    }
-
-    var view: NSView {
-        webView
+    func closeMediaPresentations(completion: @escaping () -> Void) {
+        webView.closeAllMediaPresentations(completionHandler: completion)
     }
 
     func teardown() {
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
+        let controller = webView.configuration.userContentController
+        controller.removeAllUserScripts()
         for messageName in messageNames {
-            webView.configuration.userContentController.removeScriptMessageHandler(forName: messageName)
+            controller.removeScriptMessageHandler(forName: messageName)
+        }
+        webView.removeFromSuperview()
+    }
+
+    func bypassSSL(for host: String) {
+        sslBypassedHosts.insert(host)
+    }
+
+    private func flushPendingNavigationIfNeeded() {
+        if let pendingLoadRequest {
+            self.pendingLoadRequest = nil
+            webView.load(pendingLoadRequest)
+            return
+        }
+
+        if pendingReload {
+            pendingReload = false
+            webView.reload()
         }
     }
 
-    func closeMediaPresentations(completion: @escaping () -> Void) {
-        webView.closeAllMediaPresentations {
-            completion()
+    private func emitNavigationEvent(
+        phase: BrowserNavigationPhase,
+        url: URL?,
+        title: String?,
+        progress: Double,
+        isLoading: Bool
+    ) {
+        delegate?.browserPage(
+            self,
+            didUpdateNavigation: BrowserNavigationEvent(
+                phase: phase,
+                url: url,
+                title: title,
+                progress: progress,
+                isLoading: isLoading
+            )
+        )
+    }
+
+    private func handleCancelledNavigationError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
+
+    private func mapInjectionTime(_ injectionTime: BrowserUserScriptInjectionTime) -> WKUserScriptInjectionTime {
+        switch injectionTime {
+        case .atDocumentStart:
+            .atDocumentStart
+        case .atDocumentEnd:
+            .atDocumentEnd
         }
     }
 
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
-        sslBypassedHosts.removeAll()
-        delegate?.browserPageDidStartNavigation(self)
+    private func mapHistoryTransition(_ navigationType: WKNavigationType) -> BrowserHistoryTransition {
+        switch navigationType {
+        case .linkActivated, .backForward:
+            .link
+        case .formSubmitted, .formResubmitted:
+            .formSubmit
+        case .reload:
+            .reload
+        case .other:
+            .typed
+        @unknown default:
+            .link
+        }
     }
 
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
-        lastCommittedURL = webView.url
-        delegate?.browserPageDidCommitNavigation(self)
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
-        delegate?.browserPageDidFinishNavigation(self)
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        didFail navigation: WKNavigation?,
-        withError error: Error
-    ) {
-        delegate?.browserPage(self, didFailNavigationWith: error)
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        didFailProvisionalNavigation navigation: WKNavigation?,
-        withError error: Error
-    ) {
-        delegate?.browserPage(self, didFailNavigationWith: error)
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        delegate?.browserPage(
+            self,
+            didReceiveScriptMessage: BrowserScriptMessage(name: message.name, body: message.body)
+        )
     }
 
     func webView(
@@ -250,52 +265,188 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        let requestURL = navigationAction.request.url
-        if navigationAction.shouldPerformDownload {
-            isDownloadNavigation = true
-            decisionHandler(.download)
+        let referringURL = navigationAction.request
+            .value(forHTTPHeaderField: "Referer")
+            .flatMap { URL(string: $0) }
+        let action = BrowserNavigationAction(
+            request: navigationAction.request,
+            modifierFlags: navigationAction.modifierFlags,
+            transition: mapHistoryTransition(navigationAction.navigationType),
+            referringURL: referringURL ?? lastCommittedURL,
+            isMainFrame: navigationAction.targetFrame?.isMainFrame ?? true
+        )
+
+        switch delegate?.browserPage(self, decidePolicyFor: action) ?? .allow {
+        case .allow:
+            decisionHandler(.allow)
+        case .cancel:
+            decisionHandler(.cancel)
+        case .openInNewTab:
+            if let url = navigationAction.request.url {
+                delegate?.browserPage(self, didRequestOpenInNewTab: url)
+            }
+            decisionHandler(.cancel)
+        }
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        if !isDownloadNavigation {
+            originalURL = lastCommittedURL
+            emitNavigationEvent(
+                phase: .started,
+                url: webView.url,
+                title: webView.title,
+                progress: 10.0,
+                isLoading: true
+            )
+        }
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if !isDownloadNavigation {
+            lastCommittedURL = webView.url
+            emitNavigationEvent(
+                phase: .committed,
+                url: webView.url,
+                title: webView.title,
+                progress: webView.estimatedProgress * 100.0,
+                isLoading: true
+            )
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if !isDownloadNavigation {
+            lastCommittedURL = webView.url
+            emitNavigationEvent(
+                phase: .finished,
+                url: webView.url,
+                title: webView.title,
+                progress: webView.estimatedProgress * 100.0,
+                isLoading: false
+            )
+            originalURL = nil
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard !isDownloadNavigation else {
+            originalURL = nil
             return
         }
-        isDownloadNavigation = false
-        if let requestURL,
-           let originalURL,
-           requestURL.host != originalURL.host,
-           navigationAction.navigationType == .linkActivated
-        {
-            self.originalURL = requestURL
+
+        emitNavigationEvent(
+            phase: .finished,
+            url: webView.url,
+            title: webView.title,
+            progress: 100.0,
+            isLoading: false
+        )
+
+        if !handleCancelledNavigationError(error) {
+            delegate?.browserPage(self, didFailNavigationWith: error, failingURL: webView.url)
         }
-        decisionHandler(.allow)
+        originalURL = nil
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard !isDownloadNavigation else {
+            originalURL = nil
+            return
+        }
+
+        emitNavigationEvent(
+            phase: .finished,
+            url: webView.url,
+            title: webView.title,
+            progress: 100.0,
+            isLoading: false
+        )
+
+        if handleCancelledNavigationError(error) {
+            return
+        }
+
+        let nsError = error as NSError
+        let failingURL = nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL ?? webView.url
+        delegate?.browserPage(self, didFailNavigationWith: error, failingURL: failingURL)
+        originalURL = nil
     }
 
     func webView(
         _ webView: WKWebView,
-        navigationAction: WKNavigationAction,
-        didBecome download: WKDownload
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
-        let url = navigationAction.request.url ?? originalURL ?? URL(string: "about:blank")!
-        delegate?.browserPage(self, didStartDownload: BrowserDownloadTask(download: download, originalURL: url))
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let serverTrust = challenge.protectionSpace.serverTrust,
+           sslBypassedHosts.contains(challenge.protectionSpace.host)
+        {
+            completionHandler(.useCredential, URLCredential(trust: serverTrust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
     }
 
+    @available(macOS 11.3, *)
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
         if navigationResponse.canShowMIMEType {
+            isDownloadNavigation = false
+            originalURL = nil
             decisionHandler(.allow)
-        } else {
-            isDownloadNavigation = true
-            decisionHandler(.download)
+            return
+        }
+
+        isDownloadNavigation = true
+        emitNavigationEvent(
+            phase: .finished,
+            url: originalURL,
+            title: webView.title,
+            progress: 0,
+            isLoading: false
+        )
+        decisionHandler(.download)
+    }
+
+    @available(macOS 11.3, *)
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        guard let downloadURL = navigationResponse.response.url else { return }
+        let task = BrowserDownloadTask(download: download, originalURL: downloadURL)
+        delegate?.browserPage(self, didStartDownload: task)
+        isDownloadNavigation = false
+        originalURL = nil
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        let pageURL = URL(string: "\(origin.protocol)://\(origin.host):\(origin.port)")
+        delegate?.browserPage(self, requestPermission: .mediaCapture, origin: pageURL) { decision in
+            decisionHandler(decision == .grant ? .grant : .deny)
         }
     }
 
     func webView(
         _ webView: WKWebView,
-        navigationResponse: WKNavigationResponse,
-        didBecome download: WKDownload
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
     ) {
-        let url = navigationResponse.response.url ?? originalURL ?? URL(string: "about:blank")!
-        delegate?.browserPage(self, didStartDownload: BrowserDownloadTask(download: download, originalURL: url))
+        delegate?.browserPage(
+            self,
+            runOpenPanelWith: BrowserOpenPanelOptions(
+                allowsDirectories: parameters.allowsDirectories,
+                allowsMultipleSelection: parameters.allowsMultipleSelection
+            ),
+            completion: completionHandler
+        )
     }
 
     func webView(
@@ -304,8 +455,9 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        guard let url = navigationAction.request.url else { return nil }
-        delegate?.browserPage(self, requestsNewTabFor: url)
+        if let url = navigationAction.request.url {
+            delegate?.browserPage(self, didRequestOpenInNewTab: url)
+        }
         return nil
     }
 
@@ -315,7 +467,8 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping () -> Void
     ) {
-        delegate?.browserPage(self, runJavaScriptAlert: message, completion: completionHandler)
+        delegate?.browserPage(self, runJavaScriptAlert: message)
+        completionHandler()
     }
 
     func webView(
@@ -334,22 +487,11 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping (String?) -> Void
     ) {
-        delegate?.browserPage(self, runJavaScriptPrompt: prompt, defaultText: defaultText, completion: completionHandler)
-    }
-
-    func userContentController(
-        _ userContentController: WKUserContentController,
-        didReceive message: WKScriptMessage
-    ) {
-        delegate?.browserPage(self, didReceiveScriptMessage: message)
-    }
-
-    private func mapInjectionTime(_ time: BrowserUserScript.InjectionTime) -> WKUserScriptInjectionTime {
-        switch time {
-        case .documentStart:
-            return .atDocumentStart
-        case .documentEnd:
-            return .atDocumentEnd
-        }
+        delegate?.browserPage(
+            self,
+            runJavaScriptPrompt: prompt,
+            defaultText: defaultText,
+            completion: completionHandler
+        )
     }
 }
