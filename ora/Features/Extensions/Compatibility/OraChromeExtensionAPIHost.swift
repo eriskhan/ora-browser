@@ -342,6 +342,16 @@ final class OraChromeExtensionAPIHost {
             throw BridgeError.missingSpace
         }
 
+        if let routed = try await OraChromeExtensionAPIPluginRouter.route(
+            namespace: namespace,
+            method: method,
+            args: args,
+            spaceID: spaceID,
+            context: extensionContext
+        ) {
+            return routed.value
+        }
+
         if namespace.hasPrefix("accessibilityFeatures.") {
             return try handleAccessibilitySetting(namespace: namespace, method: method, args: args)
         }
