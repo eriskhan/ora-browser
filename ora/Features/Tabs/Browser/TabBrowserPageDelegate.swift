@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+@preconcurrency import WebKit
 
 final class TabBrowserPageDelegate: BrowserPageDelegate {
     weak var tab: Tab?
@@ -62,37 +63,50 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
             passwordCoordinator?.clearAutofillState()
             tab.isLoading = event.isLoading
             tab.loadingProgress = event.progress
+
+            var changedProperties: WKWebExtension.TabChangedProperties = [.loading]
             if let url = event.url {
                 tab.url = url
+                changedProperties.insert(.url)
             }
+            notifyExtensionTabChanged(changedProperties, tab: tab)
 
         case .committed:
             tab.isLoading = event.isLoading
             tab.loadingProgress = event.progress
+
+            var changedProperties: WKWebExtension.TabChangedProperties = [.loading]
             if let title = event.title, !title.isEmpty {
                 tab.title = title
+                changedProperties.insert(.title)
                 MainActor.assumeIsolated {
                     mediaController?.syncTitleForTab(tab.id, newTitle: title)
                 }
             }
+            notifyExtensionTabChanged(changedProperties, tab: tab)
 
         case .finished:
             tab.isLoading = event.isLoading
             tab.loadingProgress = event.progress
+
+            var changedProperties: WKWebExtension.TabChangedProperties = [.loading]
             if let title = event.title, !title.isEmpty {
                 tab.title = title
+                changedProperties.insert(.title)
                 MainActor.assumeIsolated {
                     mediaController?.syncTitleForTab(tab.id, newTitle: title)
                 }
             }
             if let url = event.url {
                 tab.url = url
+                changedProperties.insert(.url)
                 if tab.favicon == nil {
                     tab.setFavicon()
                 }
                 tab.updateHistory()
                 tab.updateHeaderColor()
             }
+            notifyExtensionTabChanged(changedProperties, tab: tab)
 
             let workItem = DispatchWorkItem { [weak tab] in
                 tab?.loadingProgress = 0
@@ -104,6 +118,9 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
 
     func browserPage(_ page: BrowserPage, didFailNavigationWith error: Error, failingURL: URL?) {
         tab?.setNavigationError(error, for: failingURL)
+        if let tab {
+            notifyExtensionTabChanged(.loading, tab: tab)
+        }
     }
 
     func browserPage(_ page: BrowserPage, didReceiveScriptMessage message: BrowserScriptMessage) {
@@ -176,7 +193,7 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
     ) {
         let alert = NSAlert()
         alert.messageText = "Prompt"
-        alert.informativeText = prompt
+        alert.informativeText = message
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
@@ -235,10 +252,22 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
         }
 
         let oldTitle = tab.title
+        let oldURL = tab.url
         tab.title = update.title
         tab.url = URL(string: update.href) ?? tab.url
         tab.setFavicon()
         tab.updateHistory()
+
+        var changedProperties: WKWebExtension.TabChangedProperties = []
+        if oldTitle != tab.title {
+            changedProperties.insert(.title)
+        }
+        if oldURL != tab.url {
+            changedProperties.insert(.url)
+        }
+        if !changedProperties.isEmpty {
+            notifyExtensionTabChanged(changedProperties, tab: tab)
+        }
 
         if oldTitle != update.title, !update.title.isEmpty {
             MainActor.assumeIsolated {
@@ -257,6 +286,13 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
 
         MainActor.assumeIsolated {
             mediaController?.receive(event: payload, from: tab)
+            ExtensionManager.shared.didChangeTabProperties(.playingAudio, for: tab)
+        }
+    }
+
+    private func notifyExtensionTabChanged(_ properties: WKWebExtension.TabChangedProperties, tab: Tab) {
+        MainActor.assumeIsolated {
+            ExtensionManager.shared.didChangeTabProperties(properties, for: tab)
         }
     }
 
