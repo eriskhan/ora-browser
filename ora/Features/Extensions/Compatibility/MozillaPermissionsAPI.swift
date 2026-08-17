@@ -15,12 +15,13 @@ enum MozillaPermissionsAPI {
                 "The calling extension is not installed."
             )
         }
+        let optional = bridgePermissions(in: optionalDeclaredPermissions(record))
 
         switch method {
         case "ensureRequired":
             let requested = permissionNames(arguments.first)
             let required = bridgePermissions(in: record.originalPermissions)
-                .subtracting(bridgePermissions(in: record.optionalPermissions))
+                .subtracting(optional)
             let needed = requested.intersection(required)
                 .subtracting(record.grantedPermissions)
             return grant(
@@ -39,7 +40,6 @@ enum MozillaPermissionsAPI {
             return requested.isSubset(of: record.grantedPermissions)
         case "request":
             let requested = permissionNames(arguments.first)
-            let optional = bridgePermissions(in: record.optionalPermissions)
             guard requested.isSubset(of: optional) else {
                 throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
                     "browser.permissions.request can only request optional Firefox bridge permissions."
@@ -54,7 +54,6 @@ enum MozillaPermissionsAPI {
             )
         case "remove":
             let requested = permissionNames(arguments.first)
-            let optional = bridgePermissions(in: record.optionalPermissions)
             guard requested.isSubset(of: optional) else {
                 return false
             }
@@ -94,6 +93,23 @@ enum MozillaPermissionsAPI {
         manager.installedExtensions.first { $0.runtimeIdentifier == context.uniqueIdentifier }
     }
 
+    private static func optionalDeclaredPermissions(_ record: InstalledWebExtension) -> Set<String> {
+        if !record.optionalPermissions.isEmpty {
+            return record.optionalPermissions
+        }
+
+        let manifestURL = extensionsDirectory
+            .appendingPathComponent(record.resourceRelativePath, isDirectory: true)
+            .appendingPathComponent("manifest.json")
+        guard let source = try? String(contentsOf: manifestURL, encoding: .utf8),
+              let data = WebExtensionPackagePreparer.removingJSONComments(from: source).data(using: .utf8),
+              let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return []
+        }
+        return Set(manifest["optional_permissions"] as? [String] ?? [])
+    }
+
     private static func permissionNames(_ value: Any?) -> Set<String> {
         if let values = value as? [String] {
             return Set(values)
@@ -112,6 +128,16 @@ enum MozillaPermissionsAPI {
 
     private static func isMatchPattern(_ value: String) -> Bool {
         (try? WKWebExtension.MatchPattern(string: value)) != nil
+    }
+
+    private static var extensionsDirectory: URL {
+        let base = (try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )) ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("Ora/Extensions", isDirectory: true)
     }
 
     private static let nativeBridgePermissions: Set<String> = [
