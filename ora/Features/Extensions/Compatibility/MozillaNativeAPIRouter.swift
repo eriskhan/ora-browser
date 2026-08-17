@@ -18,6 +18,13 @@ enum MozillaNativeAPIRouter {
 
         let arguments = payload["args"] as? [Any] ?? []
         switch namespace {
+        case "browserSettings":
+            return try MozillaBrowserSettingsAPI.handle(
+                method: method,
+                arguments: arguments,
+                context: extensionContext,
+                manager: manager
+            )
         case "browsingData":
             try require("browsingData", context: extensionContext, manager: manager)
             return try await MozillaBrowsingDataAPI.handle(
@@ -51,6 +58,13 @@ enum MozillaNativeAPIRouter {
             )
         case "management":
             return try await MozillaManagementAPI.handle(
+                method: method,
+                arguments: arguments,
+                context: extensionContext,
+                manager: manager
+            )
+        case "privacy":
+            return try MozillaPrivacyAPI.handle(
                 method: method,
                 arguments: arguments,
                 context: extensionContext,
