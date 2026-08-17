@@ -31,13 +31,13 @@ enum MozillaExtensionAPICatalog {
         ),
         .init(
             "browserSettings",
-            .unsupported,
-            notes: "Ora does not expose Firefox global BrowserSetting preferences."
+            .partial,
+            notes: "Reports Ora's vertical-tab and new-tab-position behavior as read-only BrowserSettings."
         ),
         .init(
             "browsingData",
-            .unsupported,
-            notes: "WebKit does not expose the Mozilla browsingData namespace."
+            .partial,
+            notes: "Clears Ora/WebKit browsing data using real website data stores and Ora history/download models."
         ),
         .init(
             "captivePortal",
@@ -57,18 +57,26 @@ enum MozillaExtensionAPICatalog {
         ),
         .init(
             "contextualIdentities",
-            .unsupported,
-            notes: "Ora spaces are not Firefox container identities."
+            .partial,
+            notes: "Maps Ora spaces to Firefox-style container identities with persistent color, icon, order, and cookie-store IDs."
         ),
-        .init("cookies", .nativeWebKit),
+        .init(
+            "cookies",
+            .partial,
+            notes: "Uses Ora space WKHTTPCookieStores and Firefox cookieStoreIds; partitionKey metadata and WebKit-generated tab IDs are unavailable."
+        ),
         .init("declarativeNetRequest", .nativeWebKit),
         .init("devtools", .nativeWebKit),
-        .init("dns", .unsupported, notes: "WebKit does not expose the Mozilla dns namespace."),
+        .init(
+            "dns",
+            .partial,
+            notes: "Uses the macOS resolver; cache-only, cache-bypass, and speculative Firefox resolver flags are rejected."
+        ),
         .init("dom", .nativeWebKit),
         .init(
             "downloads",
-            .unsupported,
-            notes: "WebKit does not expose the Mozilla downloads namespace to WebExtensions."
+            .partial,
+            notes: "Uses Ora's download history and real URLSession transfers; dangerous-download and private-download semantics are not synthesized."
         ),
         .init("events", .nativeWebKit),
         .init("extension", .nativeWebKit),
@@ -79,17 +87,25 @@ enum MozillaExtensionAPICatalog {
         ),
         .init(
             "find",
-            .unsupported,
-            notes: "Ora's native find UI does not expose Firefox browser.find ranges and result events."
+            .partial,
+            notes: "Searches and highlights the active HTTP(S) tab with range/rectangle data; explicit tabId and cross-frame matching are not implemented."
         ),
-        .init("history", .unsupported, notes: "WebKit does not expose the Mozilla history namespace."),
+        .init(
+            "history",
+            .partial,
+            notes: "Maps Firefox history operations and events to Ora's persistent history model."
+        ),
         .init("i18n", .nativeWebKit),
         .init("identity", .unsupported, notes: "WebKit does not expose the Mozilla identity namespace."),
-        .init("idle", .unsupported, notes: "WebKit does not expose the Mozilla idle namespace."),
+        .init(
+            "idle",
+            .partial,
+            notes: "Uses real macOS inactivity and screen-lock state with per-extension detection intervals."
+        ),
         .init(
             "management",
-            .unsupported,
-            notes: "WebKit does not expose extension management APIs to extensions."
+            .partial,
+            notes: "Exposes Ora-installed extensions, enable/remove operations, permission warnings, events, and constrained AMO theme installation."
         ),
         .init("menus", .nativeWebKit),
         .init("notifications", .nativeWebKit),
@@ -107,13 +123,13 @@ enum MozillaExtensionAPICatalog {
         .init("pkcs11", .unsupported, notes: "Ora does not install or manage PKCS #11 modules."),
         .init(
             "privacy",
-            .unsupported,
-            notes: "Ora privacy settings are not exposed as Firefox BrowserSetting values."
+            .partial,
+            notes: "Exposes Ora-enforceable cookie, tracking-protection, fingerprinting, and password-save settings as BrowserSettings."
         ),
         .init(
             "proxy",
             .unsupported,
-            notes: "Ora does not expose Firefox proxy script registration or BrowserSetting semantics."
+            notes: "Firefox proxy settings affect private browsing too, while Ora keeps extension private-window access disabled."
         ),
         .init(
             "publicSuffix",
@@ -128,8 +144,8 @@ enum MozillaExtensionAPICatalog {
         .init("scripting", .nativeWebKit),
         .init(
             "search",
-            .unsupported,
-            notes: "Ora search providers are not exposed through the Mozilla search API."
+            .partial,
+            notes: "Maps Firefox search queries to Ora search engines and opens results through native tabs/windows."
         ),
         .init(
             "sessions",
@@ -151,13 +167,13 @@ enum MozillaExtensionAPICatalog {
         ),
         .init(
             "topSites",
-            .unsupported,
-            notes: "Ora does not expose frequently visited sites through this API."
+            .partial,
+            notes: "Builds Firefox-style top sites from Ora visit history; Ora has no Firefox new-tab top-sites surface."
         ),
         .init(
             "types",
             .partial,
-            notes: "WebKit-backed types are available; Firefox BrowserSetting is not synthesized."
+            notes: "WebKit-backed types are available; Firefox BrowserSetting coverage is limited to Ora-backed settings."
         ),
         .init(
             "userScripts",
@@ -169,7 +185,7 @@ enum MozillaExtensionAPICatalog {
         .init(
             "windows",
             .partial,
-            notes: "Existing Ora windows are bridged; creating a new native Ora window is not exposed yet."
+            notes: "Bridges existing Ora windows and URL-based windows.create with frame, focus, type, and state; moving existing tabs between windows is not supported."
         )
     ]
 
