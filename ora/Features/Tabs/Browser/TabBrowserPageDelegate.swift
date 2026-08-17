@@ -8,30 +8,37 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
     weak var passwordCoordinator: PasswordAutofillCoordinator?
 
     private var progressResetWorkItem: DispatchWorkItem?
+    private var pendingHistoryTransition: BrowserHistoryTransition = .typed
+    private var pendingHistoryReferringURL: URL?
 
     func browserPage(
         _ page: BrowserPage,
         decidePolicyFor navigationAction: BrowserNavigationAction
     ) -> BrowserNavigationActionDisposition {
-        guard navigationAction.modifierFlags.contains(.command),
-              let url = navigationAction.request.url,
-              let tab,
-              let tabManager = tab.tabManager,
-              let historyManager = tab.historyManager,
-              let downloadManager = tab.downloadManager
-        else {
-            return .allow
+        let shouldOpenInNewTab = navigationAction.modifierFlags.contains(.command)
+        if shouldOpenInNewTab,
+           let url = navigationAction.request.url,
+           let tab,
+           let tabManager = tab.tabManager,
+           let historyManager = tab.historyManager,
+           let downloadManager = tab.downloadManager
+        {
+            MainActor.assumeIsolated {
+                _ = tabManager.openTab(
+                    url: url,
+                    historyManager: historyManager,
+                    downloadManager: downloadManager,
+                    isPrivate: tab.isPrivate
+                )
+            }
+            return .openInNewTab
         }
 
-        MainActor.assumeIsolated {
-            _ = tabManager.openTab(
-                url: url,
-                historyManager: historyManager,
-                downloadManager: downloadManager,
-                isPrivate: tab.isPrivate
-            )
+        if navigationAction.isMainFrame {
+            pendingHistoryTransition = navigationAction.transition
+            pendingHistoryReferringURL = navigationAction.referringURL
         }
-        return .openInNewTab
+        return .allow
     }
 
     func browserPage(_ page: BrowserPage, didRequestOpenInNewTab url: URL) {
@@ -103,7 +110,12 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
                 if tab.favicon == nil {
                     tab.setFavicon()
                 }
-                tab.updateHistory()
+                tab.updateHistory(
+                    transition: pendingHistoryTransition,
+                    referringURL: pendingHistoryReferringURL
+                )
+                pendingHistoryTransition = .typed
+                pendingHistoryReferringURL = nil
                 tab.updateHeaderColor()
             }
             notifyExtensionTabChanged(changedProperties, tab: tab)
@@ -256,7 +268,9 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
         tab.title = update.title
         tab.url = URL(string: update.href) ?? tab.url
         tab.setFavicon()
-        tab.updateHistory()
+        if oldURL != tab.url {
+            tab.updateHistory(transition: .link, referringURL: oldURL)
+        }
 
         var changedProperties: WKWebExtension.TabChangedProperties = []
         if oldTitle != tab.title {
