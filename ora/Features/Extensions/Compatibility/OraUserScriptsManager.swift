@@ -9,8 +9,12 @@ final class OraUserScriptsManager {
         var resolvedCode: String
 
         func apiDictionary() -> [String: Any] {
-            if let code { return ["code": code] }
-            if let file { return ["file": file] }
+            if let code {
+                return ["code": code]
+            }
+            if let file {
+                return ["file": file]
+            }
             return ["code": resolvedCode]
         }
     }
@@ -44,7 +48,9 @@ final class OraUserScriptsManager {
                 "world": world,
                 "persistAcrossSessions": persistAcrossSessions
             ]
-            if let worldId { value["worldId"] = worldId }
+            if let worldId {
+                value["worldId"] = worldId
+            }
             return value
         }
     }
@@ -58,7 +64,9 @@ final class OraUserScriptsManager {
 
         func apiDictionary() -> [String: Any] {
             var value: [String: Any] = ["worldId": worldId, "messaging": messaging]
-            if let csp { value["csp"] = csp }
+            if let csp {
+                value["csp"] = csp
+            }
             return value
         }
     }
@@ -87,7 +95,8 @@ final class OraUserScriptsManager {
         switch method {
         case "register":
             guard let values = args.first as? [[String: Any]] else {
-                throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("userScripts.register requires an array of scripts.")
+                throw OraChromeExtensionAPIHost.BridgeError
+                    .invalidArguments("userScripts.register requires an array of scripts.")
             }
             var registrations = loadRegistrations()
             let existingIDs = Set(registrations.filter {
@@ -108,7 +117,8 @@ final class OraUserScriptsManager {
                 throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("User script IDs must be unique.")
             }
             if let duplicate = newIDs.first(where: { existingIDs.contains($0) }) {
-                throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("A user script with ID \(duplicate) is already registered.")
+                throw OraChromeExtensionAPIHost.BridgeError
+                    .invalidArguments("A user script with ID \(duplicate) is already registered.")
             }
             registrations.append(contentsOf: parsed)
             saveRegistrations(registrations)
@@ -124,16 +134,19 @@ final class OraUserScriptsManager {
 
         case "update":
             guard let updates = args.first as? [[String: Any]] else {
-                throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("userScripts.update requires an array of scripts.")
+                throw OraChromeExtensionAPIHost.BridgeError
+                    .invalidArguments("userScripts.update requires an array of scripts.")
             }
             var registrations = loadRegistrations()
             for update in updates {
                 guard let id = update["id"] as? String,
                       let index = registrations.firstIndex(where: {
-                          $0.runtimeIdentifier == runtimeIdentifier && $0.spaceID == spaceID && $0.id == id && isCurrent($0)
+                          $0.runtimeIdentifier == runtimeIdentifier && $0.spaceID == spaceID && $0
+                              .id == id && isCurrent($0)
                       })
                 else {
-                    throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("userScripts.update references an unknown script ID.")
+                    throw OraChromeExtensionAPIHost.BridgeError
+                        .invalidArguments("userScripts.update references an unknown script ID.")
                 }
                 registrations[index] = try parseRegistration(
                     update,
@@ -277,11 +290,13 @@ final class OraUserScriptsManager {
         guard let tab = try OraChromeExtensionAPIHost.shared.resolveOraTab(from: target["__oraTab"], spaceID: spaceID),
               let webView = tab.browserPage?.webExtensionWebView
         else {
-            throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("userScripts.execute could not resolve the requested tab.")
+            throw OraChromeExtensionAPIHost.BridgeError
+                .invalidArguments("userScripts.execute could not resolve the requested tab.")
         }
         let adapter = OraWebExtensionTabCache.shared.adapter(for: tab)
         guard context.hasAccess(to: tab.url, in: adapter) else {
-            throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("The extension does not have access to the target tab URL.")
+            throw OraChromeExtensionAPIHost.BridgeError
+                .invalidArguments("The extension does not have access to the target tab URL.")
         }
 
         let sources = try parseSources(
@@ -289,7 +304,8 @@ final class OraUserScriptsManager {
             installedExtension: installedExtension
         )
         guard !sources.isEmpty else {
-            throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("userScripts.execute requires JavaScript source.")
+            throw OraChromeExtensionAPIHost.BridgeError
+                .invalidArguments("userScripts.execute requires JavaScript source.")
         }
         if target["allFrames"] as? Bool == true || !(target["frameIds"] as? [NSNumber] ?? []).isEmpty {
             throw OraChromeExtensionAPIHost.BridgeError.unsupportedMethod(
@@ -334,30 +350,35 @@ final class OraUserScriptsManager {
 
         let matches = value["matches"] as? [String] ?? existing?.matches ?? []
         guard !matches.isEmpty else {
-            throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("Registered user scripts require at least one match pattern.")
+            throw OraChromeExtensionAPIHost.BridgeError
+                .invalidArguments("Registered user scripts require at least one match pattern.")
         }
         try validateHostAccess(matches: matches, context: context)
 
-        let js: [ScriptSource]
-        if let rawSources = value["js"] as? [[String: Any]] {
-            js = try parseSources(rawSources, installedExtension: installedExtension)
+        let js: [ScriptSource] = if let rawSources = value["js"] as? [[String: Any]] {
+            try parseSources(rawSources, installedExtension: installedExtension)
         } else if let existing {
-            js = existing.js
+            existing.js
         } else {
-            js = []
+            []
         }
         guard !js.isEmpty else {
-            throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("Registered user scripts require JavaScript source.")
+            throw OraChromeExtensionAPIHost.BridgeError
+                .invalidArguments("Registered user scripts require JavaScript source.")
         }
 
         let world = (value["world"] as? String ?? existing?.world ?? "USER_SCRIPT").uppercased()
         guard world == "MAIN" || world == "USER_SCRIPT" else {
-            throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("userScripts world must be MAIN or USER_SCRIPT.")
+            throw OraChromeExtensionAPIHost.BridgeError
+                .invalidArguments("userScripts world must be MAIN or USER_SCRIPT.")
         }
         let worldId = value["worldId"] as? String ?? existing?.worldId
-        if let worldId { try validateIdentifier(worldId, label: "worldId") }
+        if let worldId {
+            try validateIdentifier(worldId, label: "worldId")
+        }
         if world == "MAIN", worldId != nil {
-            throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("worldId is only valid for USER_SCRIPT worlds.")
+            throw OraChromeExtensionAPIHost.BridgeError
+                .invalidArguments("worldId is only valid for USER_SCRIPT worlds.")
         }
 
         let runAt = value["runAt"] as? String ?? existing?.runAt ?? "document_idle"
@@ -414,7 +435,8 @@ final class OraUserScriptsManager {
         let candidate = root.appendingPathComponent(path).standardizedFileURL
         let rootPath = root.standardizedFileURL.path
         guard candidate.path == rootPath || candidate.path.hasPrefix(rootPath + "/") else {
-            throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("User script files must stay inside the extension package.")
+            throw OraChromeExtensionAPIHost.BridgeError
+                .invalidArguments("User script files must stay inside the extension package.")
         }
         do {
             return try String(contentsOf: candidate, encoding: .utf8)
@@ -426,7 +448,8 @@ final class OraUserScriptsManager {
     private func validateHostAccess(matches: [String], context: WKWebExtensionContext) throws {
         for rawPattern in matches {
             guard let pattern = try? WKWebExtension.MatchPattern(string: rawPattern) else {
-                throw OraChromeExtensionAPIHost.BridgeError.invalidArguments("Invalid user script match pattern: \(rawPattern).")
+                throw OraChromeExtensionAPIHost.BridgeError
+                    .invalidArguments("Invalid user script match pattern: \(rawPattern).")
             }
             let status = context.permissionStatus(for: pattern)
             guard status == .grantedExplicitly || status == .grantedImplicitly else {
@@ -501,7 +524,7 @@ final class OraUserScriptsManager {
             if (pattern === '<all_urls>') return /^(https?|file|ftp):/.test(rawURL);
             let parsed;
             try { parsed = new URL(rawURL); } catch (_) { return false; }
-            const match = pattern.match(/^([^:]+):\\/\\/([^/]+)(\/.*)$/);
+            const match = pattern.match(/^([^:]+):\\/\\/([^/]+)(\\/.*)$/);            
             if (!match) return false;
             const [, schemePattern, hostPattern, pathPattern] = match;
             if (schemePattern !== '*' && parsed.protocol.slice(0, -1) !== schemePattern) return false;
