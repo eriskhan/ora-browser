@@ -39,6 +39,13 @@ enum MozillaNativeAPIRouter {
                 context: extensionContext,
                 manager: manager
             )
+        case "cookies":
+            return try await MozillaCookiesAPI.handle(
+                method: method,
+                arguments: arguments,
+                context: extensionContext,
+                manager: manager
+            )
         case "dns":
             try require("dns", context: extensionContext, manager: manager)
             return try await MozillaDNSAPI.handle(method: method, arguments: arguments)
