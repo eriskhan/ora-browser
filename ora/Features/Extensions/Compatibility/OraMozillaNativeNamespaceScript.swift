@@ -151,10 +151,24 @@ enum OraMozillaNativeNamespaceScript {
         return value instanceof Date ? value.getTime() : value;
     }
 
+    function isoDate(value) {
+        return value instanceof Date ? value.toISOString() : value;
+    }
+
     function removalOptions(options = {}) {
         return {
             ...options,
             since: milliseconds(options.since)
+        };
+    }
+
+    function normalizeDownloadQuery(query = {}) {
+        return {
+            ...query,
+            startedBefore: isoDate(query.startedBefore),
+            startedAfter: isoDate(query.startedAfter),
+            endedBefore: isoDate(query.endedBefore),
+            endedAfter: isoDate(query.endedAfter)
         };
     }
 
@@ -208,6 +222,30 @@ enum OraMozillaNativeNamespaceScript {
     if (!root.dns && hasPermission("dns")) {
         defineIfMissing("dns", {
             resolve: (hostname, flags = []) => nativeCall("dns", "resolve", [hostname, flags])
+        });
+    }
+
+    if (!root.downloads && hasPermission("downloads")) {
+        defineIfMissing("downloads", {
+            download: (options) => nativeCall("downloads", "download", [options || {}]),
+            search: (query = {}) => nativeCall("downloads", "search", [normalizeDownloadQuery(query)]),
+            pause: (downloadId) => nativeCall("downloads", "pause", [downloadId]),
+            resume: (downloadId) => nativeCall("downloads", "resume", [downloadId]),
+            cancel: (downloadId) => nativeCall("downloads", "cancel", [downloadId]),
+            open: (downloadId) => nativeCall("downloads", "open", [downloadId]),
+            show: (downloadId) => nativeCall("downloads", "show", [downloadId]),
+            showDefaultFolder: () => nativeCall("downloads", "showDefaultFolder"),
+            erase: (query = {}) => nativeCall("downloads", "erase", [normalizeDownloadQuery(query)]),
+            removeFile: (downloadId) => nativeCall("downloads", "removeFile", [downloadId]),
+            getFileIcon: (downloadId, options = {}) => nativeCall(
+                "downloads",
+                "getFileIcon",
+                [downloadId, options]
+            ),
+            acceptDanger: (downloadId) => nativeCall("downloads", "acceptDanger", [downloadId]),
+            onCreated: nativeEvent("downloads", "onCreated"),
+            onChanged: nativeEvent("downloads", "onChanged"),
+            onErased: nativeEvent("downloads", "onErased")
         });
     }
 
