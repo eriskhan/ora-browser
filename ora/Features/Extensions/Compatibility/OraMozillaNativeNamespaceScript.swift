@@ -76,6 +76,9 @@ enum OraMozillaNativeNamespaceScript {
     }
 
     async function nativeCall(namespace, method, args = []) {
+        if (namespace !== "permissions" && globalThis.__oraMozillaPermissionsReady) {
+            await globalThis.__oraMozillaPermissionsReady;
+        }
         if (typeof root.runtime.sendNativeMessage !== "function") {
             throw new Error(
                 `Ora native compatibility transport is unavailable for browser.${namespace}.${method}`
