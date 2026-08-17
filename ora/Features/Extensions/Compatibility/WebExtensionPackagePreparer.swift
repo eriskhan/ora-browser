@@ -59,7 +59,7 @@ struct WebExtensionPackagePreparer {
             encoding: .utf8
         )
 
-        patchBackground(in: &manifest, rootURL: rootURL)
+        try patchBackground(in: &manifest, rootURL: rootURL)
         patchContentScripts(in: &manifest)
         try patchExtensionHTMLFiles(rootURL: rootURL)
 
@@ -91,19 +91,23 @@ struct WebExtensionPackagePreparer {
         throw PreparationError.missingManifest
     }
 
-    private static func patchBackground(in manifest: inout [String: Any], rootURL: URL) {
+    private static func patchBackground(in manifest: inout [String: Any], rootURL: URL) throws {
         guard var background = manifest["background"] as? [String: Any] else { return }
 
         if let worker = background["service_worker"] as? String, !worker.isEmpty {
             let isModule = (background["type"] as? String)?.lowercased() == "module"
             let workerPath = isModule ? moduleSpecifier(for: worker) : worker
             let workerLiteral = jsonStringLiteral(workerPath)
-            let wrapper = if isModule {
-                OraMozillaCompatibilityScript.source + "\nimport \(workerLiteral);\n"
+            let wrapper: String
+
+            if isModule {
+                let compatibilityLiteral = jsonStringLiteral(moduleSpecifier(for: OraMozillaCompatibilityScript.fileName))
+                wrapper = "import \(compatibilityLiteral);\nimport \(workerLiteral);\n"
             } else {
-                OraMozillaCompatibilityScript.source + "\nimportScripts(\(workerLiteral));\n"
+                wrapper = OraMozillaCompatibilityScript.source + "\nimportScripts(\(workerLiteral));\n"
             }
-            try? wrapper.write(
+
+            try wrapper.write(
                 to: rootURL.appendingPathComponent(bridgeWorkerFileName),
                 atomically: true,
                 encoding: .utf8
