@@ -238,6 +238,21 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         }
     }
 
+    private func mapHistoryTransition(_ navigationType: WKNavigationType) -> BrowserHistoryTransition {
+        switch navigationType {
+        case .linkActivated, .backForward:
+            .link
+        case .formSubmitted, .formResubmitted:
+            .formSubmit
+        case .reload:
+            .reload
+        case .other:
+            .typed
+        @unknown default:
+            .link
+        }
+    }
+
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         delegate?.browserPage(
             self,
@@ -250,9 +265,13 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+        let referringURL = navigationAction.request.value(forHTTPHeaderField: "Referer").flatMap(URL.init(string:))
         let action = BrowserNavigationAction(
             request: navigationAction.request,
-            modifierFlags: navigationAction.modifierFlags
+            modifierFlags: navigationAction.modifierFlags,
+            transition: mapHistoryTransition(navigationAction.navigationType),
+            referringURL: referringURL ?? lastCommittedURL,
+            isMainFrame: navigationAction.targetFrame?.isMainFrame ?? true
         )
 
         switch delegate?.browserPage(self, decidePolicyFor: action) ?? .allow {
