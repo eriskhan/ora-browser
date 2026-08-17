@@ -24,3 +24,4 @@
 --exclude Carthage
 --exclude .build
 --exclude build
+--exclude ora/Features/Extensions/Compatibility/OraMozillaCompatibilityScript.swift
