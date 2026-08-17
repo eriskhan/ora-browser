@@ -265,7 +265,9 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        let referringURL = navigationAction.request.value(forHTTPHeaderField: "Referer").flatMap(URL.init(string:))
+        let referringURL = navigationAction.request
+            .value(forHTTPHeaderField: "Referer")
+            .flatMap { URL(string: $0) }
         let action = BrowserNavigationAction(
             request: navigationAction.request,
             modifierFlags: navigationAction.modifierFlags,
