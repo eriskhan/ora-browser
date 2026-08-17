@@ -189,7 +189,9 @@ struct SpacesSettingsView: View {
             .clipped()
         }
         .onAppear {
-            if selectedContainerId == nil { selectedContainerId = containers.first?.id }
+            if selectedContainerId == nil {
+                selectedContainerId = containers.first?.id
+            }
             Task {
                 for container in containers {
                     await AdBlockService.shared.registerSpace(containerId: container.id)

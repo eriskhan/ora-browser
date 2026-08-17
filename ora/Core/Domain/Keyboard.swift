@@ -29,10 +29,18 @@ struct KeyChord: Equatable, Codable {
     var display: String {
         var parts: [String] = []
         // Display order: control, option, shift, command (follows macOS convention)
-        if modifiers.contains(.control) { parts.append("⌃") }
-        if modifiers.contains(.option) { parts.append("⌥") }
-        if modifiers.contains(.shift) { parts.append("⇧") }
-        if modifiers.contains(.command) { parts.append("⌘") }
+        if modifiers.contains(.control) {
+            parts.append("⌃")
+        }
+        if modifiers.contains(.option) {
+            parts.append("⌥")
+        }
+        if modifiers.contains(.shift) {
+            parts.append("⇧")
+        }
+        if modifiers.contains(.command) {
+            parts.append("⌘")
+        }
         parts.append(keyEquivalent.display)
         return parts.joined()
     }
@@ -46,10 +54,18 @@ struct KeyChord: Equatable, Codable {
     init?(fromEvent event: NSEvent) {
         var mods: SwiftUI.EventModifiers = []
         let flags = event.modifierFlags
-        if flags.contains(.command) { mods.insert(.command) }
-        if flags.contains(.option) { mods.insert(.option) }
-        if flags.contains(.shift) { mods.insert(.shift) }
-        if flags.contains(.control) { mods.insert(.control) }
+        if flags.contains(.command) {
+            mods.insert(.command)
+        }
+        if flags.contains(.option) {
+            mods.insert(.option)
+        }
+        if flags.contains(.shift) {
+            mods.insert(.shift)
+        }
+        if flags.contains(.control) {
+            mods.insert(.control)
+        }
 
         // Convert NSEvent to KeyEquivalent directly
         let keyEquivalent: KeyEquivalent

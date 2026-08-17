@@ -4,6 +4,9 @@ import Foundation
 enum BrowserWebsiteDataType: Hashable {
     case cookies
     case cache
+    case localStorage
+    case indexedDB
+    case serviceWorkers
     case all
 }
 
@@ -38,9 +41,33 @@ enum BrowserPermissionDecision {
     case deny
 }
 
+enum BrowserHistoryTransition: String {
+    case link
+    case typed
+    case formSubmit = "form_submit"
+    case reload
+}
+
 struct BrowserNavigationAction {
     let request: URLRequest
     let modifierFlags: NSEvent.ModifierFlags
+    let transition: BrowserHistoryTransition
+    let referringURL: URL?
+    let isMainFrame: Bool
+
+    init(
+        request: URLRequest,
+        modifierFlags: NSEvent.ModifierFlags,
+        transition: BrowserHistoryTransition = .typed,
+        referringURL: URL? = nil,
+        isMainFrame: Bool = true
+    ) {
+        self.request = request
+        self.modifierFlags = modifierFlags
+        self.transition = transition
+        self.referringURL = referringURL
+        self.isMainFrame = isMainFrame
+    }
 }
 
 enum BrowserNavigationActionDisposition {

@@ -167,7 +167,9 @@ class LauncherViewModel: ObservableObject {
             return
         }
         for tab in tabs {
-            if itemsCount >= 2 { break }
+            if itemsCount >= 2 {
+                break
+            }
             suggestions.append(
                 LauncherSuggestion(
                     type: .openedTab,
@@ -264,8 +266,12 @@ class LauncherViewModel: ObservableObject {
                     var localCount = 0
                     var existingTitles = Set(self.suggestions.map(\.title))
                     for searchSuggestion in searchSuggestions {
-                        if localCount == 3 { break }
-                        if existingTitles.contains(searchSuggestion) { continue }
+                        if localCount == 3 {
+                            break
+                        }
+                        if existingTitles.contains(searchSuggestion) {
+                            continue
+                        }
 
                         let insertIndex = insertAt + localCount
                         let suggestion = LauncherSuggestion(
@@ -301,7 +307,9 @@ class LauncherViewModel: ObservableObject {
         guard let tabManager, let historyManager, let privacyMode else { return }
         let navigateCurrent = self.navigateInCurrentTab
         for history in histories {
-            if itemsCount >= 5 { break }
+            if itemsCount >= 5 {
+                break
+            }
             suggestions.append(
                 LauncherSuggestion(
                     type: .suggestedLink,
@@ -340,8 +348,12 @@ class LauncherViewModel: ObservableObject {
         let words = lowercased.split(separator: " ")
 
         // Negative signals: single words and URLs are not AI queries
-        if words.count <= 1 { return false }
-        if isValidURL(trimmed) { return false }
+        if words.count <= 1 {
+            return false
+        }
+        if isValidURL(trimmed) {
+            return false
+        }
 
         // Starts with a question word
         let questionPrefixes = [

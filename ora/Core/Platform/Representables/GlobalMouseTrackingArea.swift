@@ -95,7 +95,9 @@ private final class GlobalTrackingStrip: NSView {
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
-        if newWindow == nil { hoverTracker?.stop() }
+        if newWindow == nil {
+            hoverTracker?.stop()
+        }
         super.viewWillMove(toWindow: newWindow)
     }
 
@@ -209,7 +211,9 @@ private class GlobalHoverTracker {
     }
 
     func stop() {
-        if let local = localMonitor { NSEvent.removeMonitor(local) }
+        if let local = localMonitor {
+            NSEvent.removeMonitor(local)
+        }
         localMonitor = nil
         isInside = false
     }

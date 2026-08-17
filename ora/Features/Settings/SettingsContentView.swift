@@ -7,6 +7,7 @@ enum SettingsTab: String, Hashable, CaseIterable {
     case passwords
     case shortcuts
     case searchEngines
+    case extensions
 
     var title: String {
         switch self {
@@ -15,6 +16,7 @@ enum SettingsTab: String, Hashable, CaseIterable {
         case .passwords: return "Passwords"
         case .shortcuts: return "Shortcuts"
         case .searchEngines: return "Search"
+        case .extensions: return "Extensions"
         }
     }
 
@@ -25,6 +27,7 @@ enum SettingsTab: String, Hashable, CaseIterable {
         case .passwords: return "key.horizontal"
         case .shortcuts: return "command"
         case .searchEngines: return "magnifyingglass"
+        case .extensions: return "puzzlepiece.extension"
         }
     }
 
@@ -40,6 +43,8 @@ enum SettingsTab: String, Hashable, CaseIterable {
             return "Keyboard shortcuts and command mappings."
         case .searchEngines:
             return "Default search providers, AI engines, and custom shortcuts."
+        case .extensions:
+            return "Install WebExtensions and review Mozilla API compatibility."
         }
     }
 }
@@ -96,6 +101,8 @@ struct SettingsContentView: View {
             ShortcutsSettingsView()
         case .searchEngines:
             SearchEngineSettingsView()
+        case .extensions:
+            ExtensionsSettingsView()
         }
     }
 }

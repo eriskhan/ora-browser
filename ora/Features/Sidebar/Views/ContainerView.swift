@@ -163,15 +163,13 @@ private struct OraWindowDragGesture: ViewModifier {
     @Binding var isDragging: Bool
 
     func body(content: Content) -> some View {
-        Group {
-            if isDragging {
-                content
+        if isDragging {
+            content
+        } else {
+            if #available(macOS 15.0, *) {
+                content.gesture(WindowDragGesture())
             } else {
-                if #available(macOS 15.0, *) {
-                    content.gesture(WindowDragGesture())
-                } else {
-                    content.gesture(BackportWindowDragGesture(isDragging: $isDragging))
-                }
+                content.gesture(BackportWindowDragGesture(isDragging: $isDragging))
             }
         }
     }

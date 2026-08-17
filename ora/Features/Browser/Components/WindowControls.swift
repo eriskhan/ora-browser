@@ -22,8 +22,6 @@ struct WindowControls: View {
                     isHovered = hovering
                 }
             }
-        } else {
-            EmptyView()
         }
     }
 }

@@ -21,7 +21,9 @@ enum ClipboardUtils {
         startWheelAnimation: Binding<Bool>
     ) {
         // Prevent double-trigger if both Command and view shortcut fire
-        if showCopiedAnimation.wrappedValue { return }
+        if showCopiedAnimation.wrappedValue {
+            return
+        }
         copyToClipboard(text)
         withAnimation {
             showCopiedAnimation.wrappedValue = true

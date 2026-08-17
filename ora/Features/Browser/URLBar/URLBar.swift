@@ -262,11 +262,15 @@ struct URLBar: View {
                     .allowsHitTesting(false)
             )
             .onChange(of: tabManager.activeTab?.id) { _, _ in
-                if isEditing { dismissEditing() }
+                if isEditing {
+                    dismissEditing()
+                }
             }
             .onChange(of: appState.showLauncher) { _, newValue in
                 // Dismiss URL bar editing if the center launcher is opened
-                if newValue, isEditing { dismissEditing() }
+                if newValue, isEditing {
+                    dismissEditing()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .copyAddressURL)) { _ in
                 if let activeTab = tabManager.activeTab {

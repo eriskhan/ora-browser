@@ -15,7 +15,9 @@ struct GlobalMediaPlayer: View {
             guard let activeId else { return true }
             return session.tabID != activeId
         }
-        if isHovered { return Array(visible.prefix(4)) }
+        if isHovered {
+            return Array(visible.prefix(4))
+        }
         return Array(visible.prefix(1))
     }
 

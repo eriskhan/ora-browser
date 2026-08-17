@@ -120,6 +120,7 @@ class TabManager: ObservableObject {
         }
 
         try? modelContext.save()
+        ExtensionManager.shared.didChangeTabProperties(.pinned, for: tab)
     }
 
     func toggleFavTab(_ tab: Tab) {
@@ -216,6 +217,7 @@ class TabManager: ObservableObject {
     }
 
     func activateContainer(_ container: TabContainer, activateLastAccessedTab: Bool = true) {
+        let previousActiveTab = activeTab
         activeContainer = container
         container.lastAccessedAt = Date()
 
@@ -228,6 +230,9 @@ class TabManager: ObservableObject {
             activeTab = lastAccessedTab
             activeTab?.maybeIsActive = true
             lastAccessedTab.lastAccessedAt = Date()
+            if previousActiveTab?.id != lastAccessedTab.id {
+                ExtensionManager.shared.didActivateTab(lastAccessedTab, previousTab: previousActiveTab)
+            }
         } else {
             activeTab = nil
         }
@@ -247,6 +252,7 @@ class TabManager: ObservableObject {
         downloadManager: DownloadManager? = nil,
         isPrivate: Bool
     ) -> Tab {
+        let previousActiveTab = activeTab
         let cleanHost: String? = {
             guard let host = url.host else { return nil }
             return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
@@ -266,11 +272,13 @@ class TabManager: ObservableObject {
         )
         modelContext.insert(newTab)
         container.tabs.append(newTab)
-        activeTab?.maybeIsActive  = false
+        activeTab?.maybeIsActive = false
         activeTab = newTab
-        activeTab?.maybeIsActive  = true
+        activeTab?.maybeIsActive = true
         newTab.lastAccessedAt = Date()
         container.lastAccessedAt = Date()
+        ExtensionManager.shared.didCreateTab(newTab)
+        ExtensionManager.shared.didActivateTab(newTab, previousTab: previousActiveTab)
 
         // Initialize the WebView for the new active tab
         newTab.restoreTransientState(
@@ -320,6 +328,7 @@ class TabManager: ObservableObject {
                 )
                 modelContext.insert(newTab)
                 container.tabs.append(newTab)
+                ExtensionManager.shared.didCreateTab(newTab)
 
                 if focusAfterOpening {
                     activateTab(newTab)
@@ -351,8 +360,12 @@ class TabManager: ObservableObject {
     }
 
     func switchSections(from: Tab, toTab: Tab) {
+        let wasPinned = from.type == .pinned
         from.switchSections(from: from, to: toTab)
         try? modelContext.save()
+        if wasPinned != (from.type == .pinned) {
+            ExtensionManager.shared.didChangeTabProperties(.pinned, for: from)
+        }
     }
 
     func closeTab(tab: Tab, shouldTrackForRestore: Bool = true) {
@@ -392,6 +405,7 @@ class TabManager: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 if tab.type == .normal {
+                    ExtensionManager.shared.didCloseTab(tab)
                     self.modelContext.delete(tab)
                 } else {
                     tab.isWebViewReady = false
@@ -438,6 +452,7 @@ class TabManager: ObservableObject {
 
         modelContext.insert(restoredTab)
         container.tabs.append(restoredTab)
+        ExtensionManager.shared.didCreateTab(restoredTab)
         activateTab(restoredTab)
         try? modelContext.save()
     }
@@ -450,8 +465,10 @@ class TabManager: ObservableObject {
     }
 
     func activateTab(_ tab: Tab) {
+        let previousActiveTab = activeTab
+
         // Toggle Picture-in-Picture on tab switch
-        togglePiP(tab, activeTab)
+        togglePiP(tab, previousActiveTab)
 
         // Activate the tab
         activeTab?.maybeIsActive = false
@@ -475,6 +492,9 @@ class TabManager: ObservableObject {
                 tabManager: self,
                 isPrivate: tab.isPrivate
             )
+        }
+        if previousActiveTab?.id != tab.id {
+            ExtensionManager.shared.didActivateTab(tab, previousTab: previousActiveTab)
         }
         tab.updateHeaderColor()
         try? modelContext.save()
@@ -668,6 +688,7 @@ private extension TabManager {
 
     func deleteContainerContents(_ container: TabContainer, containerId: UUID) {
         for tab in Array(container.tabs) {
+            ExtensionManager.shared.didCloseTab(tab)
             if tab.isWebViewReady {
                 tab.destroyWebView()
             }

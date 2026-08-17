@@ -45,43 +45,81 @@ class DownloadManager: ObservableObject {
         suggestedFilename: String,
         expectedSize: Int64 = 0
     ) -> Download {
+        let download = makeDownload(
+            originalURL: originalURL,
+            suggestedFilename: suggestedFilename,
+            expectedSize: expectedSize,
+            destinationURL: nil
+        )
+        activeDownloadTasks[download.id] = downloadTask
+        MozillaDownloadsAPI.didCreate(download)
+        showDownloadStartedToast(filename: suggestedFilename)
+        return download
+    }
+
+    func startExternalDownload(
+        originalURL: URL,
+        suggestedFilename: String,
+        destinationURL: URL,
+        expectedSize: Int64 = 0
+    ) -> Download {
+        let download = makeDownload(
+            originalURL: originalURL,
+            suggestedFilename: suggestedFilename,
+            expectedSize: expectedSize,
+            destinationURL: destinationURL
+        )
+        MozillaDownloadsAPI.didCreate(download)
+        showDownloadStartedToast(filename: suggestedFilename)
+        return download
+    }
+
+    private func makeDownload(
+        originalURL: URL,
+        suggestedFilename: String,
+        expectedSize: Int64,
+        destinationURL: URL?
+    ) -> Download {
         let download = Download(
             originalURL: originalURL,
             fileName: suggestedFilename,
             fileSize: expectedSize
         )
-
         download.status = .downloading
         download.isActive = true
+        download.destinationURL = destinationURL
 
-        // Save to SwiftData
         modelContext.insert(download)
-        do {
-            try modelContext.save()
-        } catch {
-            // Failed to save download
-        }
-
-        activeDownloadTasks[download.id] = downloadTask
+        try? modelContext.save()
         activeDownloads.append(download)
         refreshRecentDownloads()
 
-        // Ensure SwiftUI picks up the change when called from WKDownload callbacks
         DispatchQueue.main.async {
             self.objectWillChange.send()
         }
-
-        toastManager?.show("Downloading \(suggestedFilename)", type: .info, icon: .system("arrow.down.circle"))
-
         return download
     }
 
+    private func showDownloadStartedToast(filename: String) {
+        toastManager?.show(
+            "Downloading \(filename)",
+            type: .info,
+            icon: .system("arrow.down.circle")
+        )
+    }
+
     func updateDownloadProgress(_ download: Download, downloadedBytes: Int64, totalBytes: Int64) {
+        let previousBytes = download.downloadedBytes
+        let previousTotalBytes = download.fileSize
         download.updateProgress(downloadedBytes: downloadedBytes, totalBytes: totalBytes)
 
         try? modelContext.save()
+        MozillaDownloadsAPI.didChangeProgress(
+            download,
+            previousBytes: previousBytes,
+            previousTotalBytes: previousTotalBytes
+        )
 
-        // Trigger UI updates
         DispatchQueue.main.async {
             self.objectWillChange.send()
             download.objectWillChange.send()
@@ -89,6 +127,7 @@ class DownloadManager: ObservableObject {
     }
 
     func completeDownload(_ download: Download, destinationURL: URL) {
+        let previousStatus = download.status
         download.markCompleted(destinationURL: destinationURL)
 
         try? modelContext.save()
@@ -96,11 +135,13 @@ class DownloadManager: ObservableObject {
         activeDownloadTasks.removeValue(forKey: download.id)
         activeDownloads.removeAll { $0.id == download.id }
         refreshRecentDownloads()
+        MozillaDownloadsAPI.didChangeState(download, previousStatus: previousStatus)
 
         toastManager?.show("Downloaded \(download.fileName)", icon: .system("checkmark.circle"))
     }
 
     func failDownload(_ download: Download, error: String) {
+        let previousStatus = download.status
         download.markFailed(error: error)
 
         try? modelContext.save()
@@ -108,12 +149,14 @@ class DownloadManager: ObservableObject {
         activeDownloadTasks.removeValue(forKey: download.id)
         activeDownloads.removeAll { $0.id == download.id }
         refreshRecentDownloads()
+        MozillaDownloadsAPI.didChangeState(download, previousStatus: previousStatus)
 
         toastManager?.show("Download failed \(download.fileName)", type: .error)
     }
 
     func cancelDownload(_ download: Download) {
         let fileName = download.fileName
+        let previousStatus = download.status
         if let downloadTask = activeDownloadTasks[download.id] {
             downloadTask.cancel()
             cleanupTask(downloadTask.id)
@@ -126,6 +169,7 @@ class DownloadManager: ObservableObject {
         activeDownloadTasks.removeValue(forKey: download.id)
         activeDownloads.removeAll { $0.id == download.id }
         refreshRecentDownloads()
+        MozillaDownloadsAPI.didChangeState(download, previousStatus: previousStatus)
 
         toastManager?.show("Download cancelled \(fileName)", type: .info, icon: .system("xmark.circle"))
     }
@@ -147,6 +191,8 @@ class DownloadManager: ObservableObject {
                 suggestedFilename: suggestedFilename,
                 expectedSize: expectedSize
             )
+            download.destinationURL = finalURL
+            try? self.modelContext.save()
 
             self.taskDownloads[task.id] = download
             self.taskDestinationURLs[task.id] = finalURL
@@ -156,9 +202,11 @@ class DownloadManager: ObservableObject {
 
         task.onRedirect = { [weak self] newURL in
             guard let self, let download = self.taskDownloads[task.id] else { return }
+            let previousURL = download.originalURL
             download.originalURL = newURL
             download.originalURLString = newURL.absoluteString
             try? self.modelContext.save()
+            MozillaDownloadsAPI.didChangeURL(download, previousURL: previousURL)
         }
 
         task.onFinish = { [weak self] in
@@ -183,6 +231,7 @@ class DownloadManager: ObservableObject {
     func clearCompletedDownloads() {
         let completedDownloads = recentDownloads.filter { $0.status == .completed }
         for download in completedDownloads {
+            MozillaDownloadsAPI.didErase(download)
             modelContext.delete(download)
         }
 
@@ -195,6 +244,7 @@ class DownloadManager: ObservableObject {
             $0.status == .completed || $0.status == .failed || $0.status == .cancelled
         }
         for download in nonActive {
+            MozillaDownloadsAPI.didErase(download)
             modelContext.delete(download)
         }
 
@@ -203,11 +253,11 @@ class DownloadManager: ObservableObject {
     }
 
     func deleteDownload(_ download: Download) {
-        // If it's an active download, cancel it first
         if download.status == .downloading {
             cancelDownload(download)
         }
 
+        MozillaDownloadsAPI.didErase(download)
         modelContext.delete(download)
         try? modelContext.save()
         refreshRecentDownloads()
@@ -223,7 +273,6 @@ class DownloadManager: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    /// Moves the downloaded file to Trash and removes the entry from history
     func moveToTrash(_ download: Download) {
         if let url = download.destinationURL {
             try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
@@ -231,7 +280,6 @@ class DownloadManager: ObservableObject {
         deleteDownload(download)
     }
 
-    /// Re-opens the original URL in the browser to re-trigger the download
     func retryDownload(_ download: Download) {
         guard let url = URL(string: download.originalURLString) else { return }
         deleteDownload(download)
@@ -240,17 +288,19 @@ class DownloadManager: ObservableObject {
         }
     }
 
+    func reloadDownloadsForExtensionAPI() {
+        refreshRecentDownloads()
+    }
+
     private func refreshRecentDownloads() {
         loadRecentDownloads()
     }
 
-    /// Helper to get default downloads directory
     func getDownloadsDirectory() -> URL {
         return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)
             .first ?? URL(fileURLWithPath: NSHomeDirectory())
     }
 
-    /// Helper to create unique filename if file already exists
     func createUniqueFilename(for url: URL) -> URL {
         var finalURL = url
         var counter = 1
