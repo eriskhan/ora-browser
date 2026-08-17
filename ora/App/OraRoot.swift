@@ -107,6 +107,21 @@ struct OraRoot: View {
             .modelContext(downloadContext)
             .withTheme()
             .enableInjection()
+            .task(id: window?.windowNumber) {
+                await MainActor.run {
+                    ExtensionManager.shared.attach(
+                        tabManager: tabManager,
+                        window: window,
+                        isPrivate: privacyMode.isPrivate
+                    )
+                }
+                await ExtensionManager.shared.loadAllExtensions()
+            }
+            .onDisappear {
+                Task { @MainActor in
+                    ExtensionManager.shared.detach(tabManager: tabManager)
+                }
+            }
             .onAppear {
                 downloadManager.toastManager = toastManager
                 Task {
