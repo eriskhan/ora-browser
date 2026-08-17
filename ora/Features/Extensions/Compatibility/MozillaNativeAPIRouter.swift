@@ -49,6 +49,13 @@ enum MozillaNativeAPIRouter {
                 context: extensionContext,
                 manager: manager
             )
+        case "find":
+            return try await MozillaFindAPI.handle(
+                method: method,
+                arguments: arguments,
+                context: extensionContext,
+                manager: manager
+            )
         case "idle":
             return try MozillaIdleAPI.handle(
                 method: method,
