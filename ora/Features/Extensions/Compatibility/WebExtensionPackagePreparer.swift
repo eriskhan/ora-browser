@@ -148,7 +148,7 @@ enum WebExtensionPackagePreparer {
         try updatedManifest.write(to: manifestURL, options: .atomic)
         return PreparedWebExtensionPackage(
             resourceURL: rootURL,
-            originalPermissions: originalPermissions,
+            originalPermissions: declaredPermissions,
             optionalPermissions: optionalPermissions,
             compatibilityRevision: currentCompatibilityRevision
         )
