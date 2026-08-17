@@ -32,6 +32,23 @@ enum MozillaNativeAPIRouter {
                 context: extensionContext,
                 manager: manager
             )
+        case "dns":
+            try require("dns", context: extensionContext, manager: manager)
+            return try await MozillaDNSAPI.handle(method: method, arguments: arguments)
+        case "idle":
+            return try MozillaIdleAPI.handle(
+                method: method,
+                arguments: arguments,
+                context: extensionContext,
+                manager: manager
+            )
+        case "management":
+            return try await MozillaManagementAPI.handle(
+                method: method,
+                arguments: arguments,
+                context: extensionContext,
+                manager: manager
+            )
         default:
             return try await MozillaNativeAPIBridge.shared.handleMessage(
                 message,
