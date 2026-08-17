@@ -82,7 +82,7 @@ final class History {
         var records = visitRecords
         records.append(record)
         visitRecords = records
-        visitCount = records.count
+        visitCount += 1
         lastAccessedAt = date
         return record
     }
