@@ -51,7 +51,7 @@ extension ExtensionManager {
         completionHandler: @escaping ((any Error)?) -> Void
     ) {
         do {
-            try MozillaNativeAPIBridge.shared.connect(port: port)
+            try MozillaNativeAPIBridge.shared.connect(port: port, context: extensionContext)
             completionHandler(nil)
         } catch {
             completionHandler(error)
