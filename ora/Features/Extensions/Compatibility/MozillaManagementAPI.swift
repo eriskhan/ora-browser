@@ -7,6 +7,14 @@ import ZIPFoundation
 
 @MainActor
 enum MozillaManagementAPI {
+    private static let readMethods: Set<String> = [
+        "getSelf",
+        "getAll",
+        "get",
+        "getPermissionWarningsById",
+        "getPermissionWarningsByManifest"
+    ]
+
     private static var observer: AnyCancellable?
     private static var previousExtensions: [UUID: InstalledWebExtension] = [:]
 
@@ -17,138 +25,229 @@ enum MozillaManagementAPI {
         manager: ExtensionManager
     ) async throws -> Any {
         startObserving(manager: manager)
-        let caller = callingExtension(context: context, manager: manager)
+        if readMethods.contains(method) {
+            return try handleRead(
+                method: method,
+                arguments: arguments,
+                context: context,
+                manager: manager
+            )
+        }
+        return try await handleMutation(
+            method: method,
+            arguments: arguments,
+            context: context,
+            manager: manager
+        )
+    }
 
+    private static func handleRead(
+        method: String,
+        arguments: [Any],
+        context: WKWebExtensionContext,
+        manager: ExtensionManager
+    ) throws -> Any {
         switch method {
         case "getSelf":
-            guard let caller else {
-                throw MozillaNativeAPIBridge.BridgeError.itemNotFound("The calling extension is not installed.")
-            }
-            return extensionInfo(caller)
-
+            return try getSelf(context: context, manager: manager)
         case "getAll":
             try requireManagement(context: context, manager: manager)
             return manager.installedExtensions.map(extensionInfo)
-
         case "get":
-            try requireManagement(context: context, manager: manager)
-            guard let identifier = arguments.first as? String,
-                  let extensionValue = installedExtension(identifier, manager: manager)
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.itemNotFound("The requested extension is not installed.")
-            }
-            return extensionInfo(extensionValue)
-
-        case "setEnabled":
-            try requireManagement(context: context, manager: manager)
-            guard arguments.count >= 2,
-                  let identifier = arguments[0] as? String,
-                  let enabled = arguments[1] as? Bool,
-                  let extensionValue = installedExtension(identifier, manager: manager)
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
-                    "browser.management.setEnabled requires an installed extension ID and enabled state."
-                )
-            }
-            if caller?.id == extensionValue.id, !enabled {
-                Task { @MainActor in
-                    await Task.yield()
-                    try? await manager.setEnabled(false, extensionID: extensionValue.id)
-                }
-            } else {
-                try await manager.setEnabled(enabled, extensionID: extensionValue.id)
-            }
-            return NSNull()
-
-        case "uninstall":
-            try requireManagement(context: context, manager: manager)
-            guard let identifier = arguments.first as? String,
-                  let extensionValue = installedExtension(identifier, manager: manager)
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.itemNotFound("The requested extension is not installed.")
-            }
-            let options = arguments.dropFirst().first as? [String: Any] ?? [:]
-            let isSelf = caller?.id == extensionValue.id
-            let showConfirmation = !isSelf || (options["showConfirmDialog"] as? Bool ?? false)
-            if showConfirmation, !confirmUninstall(extensionValue) {
-                throw MozillaNativeAPIBridge.BridgeError.invalidArguments("The user canceled extension removal.")
-            }
-            if isSelf {
-                Task { @MainActor in
-                    await Task.yield()
-                    manager.removeExtension(extensionValue.id)
-                }
-            } else {
-                manager.removeExtension(extensionValue.id)
-            }
-            return NSNull()
-
-        case "uninstallSelf":
-            guard let caller else {
-                throw MozillaNativeAPIBridge.BridgeError.itemNotFound("The calling extension is not installed.")
-            }
-            let options = arguments.first as? [String: Any] ?? [:]
-            if options["showConfirmDialog"] as? Bool == true, !confirmUninstall(caller) {
-                throw MozillaNativeAPIBridge.BridgeError.invalidArguments("The user canceled extension removal.")
-            }
-            Task { @MainActor in
-                await Task.yield()
-                manager.removeExtension(caller.id)
-            }
-            return NSNull()
-
+            return try get(arguments: arguments, context: context, manager: manager)
         case "getPermissionWarningsById":
-            try requireManagement(context: context, manager: manager)
-            guard let identifier = arguments.first as? String,
-                  let extensionValue = installedExtension(identifier, manager: manager)
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.itemNotFound("The requested extension is not installed.")
-            }
-            return permissionWarnings(
-                permissions: extensionValue.originalPermissions,
-                hostPermissions: extensionValue.grantedMatchPatterns
-            )
-
+            return try warningsByID(arguments: arguments, context: context, manager: manager)
         case "getPermissionWarningsByManifest":
-            guard let manifestText = arguments.first as? String,
-                  let data = WebExtensionPackagePreparer.removingJSONComments(from: manifestText).data(using: .utf8),
-                  let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.invalidArguments("A valid extension manifest is required.")
-            }
-            let permissions = Set(manifest["permissions"] as? [String] ?? [])
-            let hostPermissions = Set(manifest["host_permissions"] as? [String] ?? [])
-                .union(permissions.filter(isHostPermission))
-            return permissionWarnings(
-                permissions: permissions.filter { !isHostPermission($0) },
-                hostPermissions: hostPermissions
-            )
-
-        case "install":
-            try requireManagement(context: context, manager: manager)
-            guard let options = arguments.first as? [String: Any],
-                  let urlString = options["url"] as? String,
-                  let url = URL(string: urlString),
-                  url.scheme == "https",
-                  url.host?.lowercased() == "addons.mozilla.org"
-            else {
-                throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
-                    "Ora only accepts HTTPS theme installs initiated from addons.mozilla.org."
-                )
-            }
-            let installed = try await installTheme(
-                from: url,
-                expectedHash: options["hash"] as? String,
-                manager: manager
-            )
-            return ["id": installed.runtimeIdentifier]
-
-        case "__subscribe":
-            return NSNull()
-
+            return try warningsByManifest(arguments: arguments)
         default:
             throw MozillaNativeAPIBridge.BridgeError.unsupportedMethod("management", method)
         }
+    }
+
+    private static func handleMutation(
+        method: String,
+        arguments: [Any],
+        context: WKWebExtensionContext,
+        manager: ExtensionManager
+    ) async throws -> Any {
+        switch method {
+        case "setEnabled":
+            return try await setEnabled(arguments: arguments, context: context, manager: manager)
+        case "uninstall":
+            return try uninstall(arguments: arguments, context: context, manager: manager)
+        case "uninstallSelf":
+            return try uninstallSelf(arguments: arguments, context: context, manager: manager)
+        case "install":
+            return try await install(arguments: arguments, context: context, manager: manager)
+        case "__subscribe":
+            return NSNull()
+        default:
+            throw MozillaNativeAPIBridge.BridgeError.unsupportedMethod("management", method)
+        }
+    }
+
+    private static func getSelf(
+        context: WKWebExtensionContext,
+        manager: ExtensionManager
+    ) throws -> [String: Any] {
+        guard let caller = callingExtension(context: context, manager: manager) else {
+            throw MozillaNativeAPIBridge.BridgeError.itemNotFound(
+                "The calling extension is not installed."
+            )
+        }
+        return extensionInfo(caller)
+    }
+
+    private static func get(
+        arguments: [Any],
+        context: WKWebExtensionContext,
+        manager: ExtensionManager
+    ) throws -> [String: Any] {
+        try requireManagement(context: context, manager: manager)
+        guard let identifier = arguments.first as? String,
+              let extensionValue = installedExtension(identifier, manager: manager)
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.itemNotFound(
+                "The requested extension is not installed."
+            )
+        }
+        return extensionInfo(extensionValue)
+    }
+
+    private static func setEnabled(
+        arguments: [Any],
+        context: WKWebExtensionContext,
+        manager: ExtensionManager
+    ) async throws -> Any {
+        try requireManagement(context: context, manager: manager)
+        guard arguments.count >= 2,
+              let identifier = arguments[0] as? String,
+              let enabled = arguments[1] as? Bool,
+              let extensionValue = installedExtension(identifier, manager: manager)
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "browser.management.setEnabled requires an installed extension ID and enabled state."
+            )
+        }
+
+        let caller = callingExtension(context: context, manager: manager)
+        if caller?.id == extensionValue.id, !enabled {
+            deferRemovalAction {
+                try? await manager.setEnabled(false, extensionID: extensionValue.id)
+            }
+        } else {
+            try await manager.setEnabled(enabled, extensionID: extensionValue.id)
+        }
+        return NSNull()
+    }
+
+    private static func uninstall(
+        arguments: [Any],
+        context: WKWebExtensionContext,
+        manager: ExtensionManager
+    ) throws -> Any {
+        try requireManagement(context: context, manager: manager)
+        guard let identifier = arguments.first as? String,
+              let extensionValue = installedExtension(identifier, manager: manager)
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.itemNotFound(
+                "The requested extension is not installed."
+            )
+        }
+
+        let caller = callingExtension(context: context, manager: manager)
+        let options = arguments.dropFirst().first as? [String: Any] ?? [:]
+        let isSelf = caller?.id == extensionValue.id
+        let shouldConfirm = !isSelf || (options["showConfirmDialog"] as? Bool ?? false)
+        if shouldConfirm, !confirmUninstall(extensionValue) {
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "The user canceled extension removal."
+            )
+        }
+        remove(extensionValue, deferred: isSelf, manager: manager)
+        return NSNull()
+    }
+
+    private static func uninstallSelf(
+        arguments: [Any],
+        context: WKWebExtensionContext,
+        manager: ExtensionManager
+    ) throws -> Any {
+        guard let caller = callingExtension(context: context, manager: manager) else {
+            throw MozillaNativeAPIBridge.BridgeError.itemNotFound(
+                "The calling extension is not installed."
+            )
+        }
+        let options = arguments.first as? [String: Any] ?? [:]
+        if options["showConfirmDialog"] as? Bool == true, !confirmUninstall(caller) {
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "The user canceled extension removal."
+            )
+        }
+        remove(caller, deferred: true, manager: manager)
+        return NSNull()
+    }
+
+    private static func warningsByID(
+        arguments: [Any],
+        context: WKWebExtensionContext,
+        manager: ExtensionManager
+    ) throws -> [String] {
+        try requireManagement(context: context, manager: manager)
+        guard let identifier = arguments.first as? String,
+              let extensionValue = installedExtension(identifier, manager: manager)
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.itemNotFound(
+                "The requested extension is not installed."
+            )
+        }
+        return permissionWarnings(
+            permissions: extensionValue.originalPermissions,
+            hostPermissions: extensionValue.grantedMatchPatterns
+        )
+    }
+
+    private static func warningsByManifest(arguments: [Any]) throws -> [String] {
+        guard let manifestText = arguments.first as? String,
+              let data = WebExtensionPackagePreparer
+                .removingJSONComments(from: manifestText).data(using: .utf8),
+              let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "A valid extension manifest is required."
+            )
+        }
+        let permissions = Set(manifest["permissions"] as? [String] ?? [])
+        let hostPermissions = Set(manifest["host_permissions"] as? [String] ?? [])
+            .union(permissions.filter(isHostPermission))
+        return permissionWarnings(
+            permissions: permissions.filter { !isHostPermission($0) },
+            hostPermissions: hostPermissions
+        )
+    }
+
+    private static func install(
+        arguments: [Any],
+        context: WKWebExtensionContext,
+        manager: ExtensionManager
+    ) async throws -> [String: String] {
+        try requireManagement(context: context, manager: manager)
+        guard let options = arguments.first as? [String: Any],
+              let urlString = options["url"] as? String,
+              let url = URL(string: urlString),
+              url.scheme == "https",
+              url.host?.lowercased() == "addons.mozilla.org"
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "Ora only accepts HTTPS theme installs initiated from addons.mozilla.org."
+            )
+        }
+        let installed = try await installTheme(
+            from: url,
+            expectedHash: options["hash"] as? String,
+            manager: manager
+        )
+        return ["id": installed.runtimeIdentifier]
     }
 
     private static func requireManagement(
@@ -158,37 +257,79 @@ enum MozillaManagementAPI {
         try MozillaNativeAPIRouter.require("management", context: context, manager: manager)
     }
 
+    private static func deferRemovalAction(
+        _ action: @escaping @MainActor () async -> Void
+    ) {
+        Task { @MainActor in
+            await Task.yield()
+            await action()
+        }
+    }
+
+    private static func remove(
+        _ installed: InstalledWebExtension,
+        deferred: Bool,
+        manager: ExtensionManager
+    ) {
+        if deferred {
+            deferRemovalAction {
+                manager.removeExtension(installed.id)
+            }
+        } else {
+            manager.removeExtension(installed.id)
+        }
+    }
+
     private static func startObserving(manager: ExtensionManager) {
         guard observer == nil else { return }
-        previousExtensions = Dictionary(uniqueKeysWithValues: manager.installedExtensions.map { ($0.id, $0) })
+        previousExtensions = Dictionary(
+            uniqueKeysWithValues: manager.installedExtensions.map { ($0.id, $0) }
+        )
         observer = manager.$installedExtensions.dropFirst().sink { extensions in
             Task { @MainActor in
-                let current = Dictionary(uniqueKeysWithValues: extensions.map { ($0.id, $0) })
-
-                for (id, value) in current where previousExtensions[id] == nil {
-                    MozillaNativeAPIBridge.shared.emit(
-                        namespace: "management",
-                        event: "onInstalled",
-                        arguments: [extensionInfo(value)]
-                    )
-                }
-                for (id, oldValue) in previousExtensions where current[id] == nil {
-                    MozillaNativeAPIBridge.shared.emit(
-                        namespace: "management",
-                        event: "onUninstalled",
-                        arguments: [extensionInfo(oldValue)]
-                    )
-                }
-                for (id, value) in current {
-                    guard let oldValue = previousExtensions[id], oldValue.isEnabled != value.isEnabled else { continue }
-                    MozillaNativeAPIBridge.shared.emit(
-                        namespace: "management",
-                        event: value.isEnabled ? "onEnabled" : "onDisabled",
-                        arguments: [extensionInfo(value)]
-                    )
-                }
-                previousExtensions = current
+                emitChanges(extensions)
             }
+        }
+    }
+
+    private static func emitChanges(_ extensions: [InstalledWebExtension]) {
+        let current = Dictionary(uniqueKeysWithValues: extensions.map { ($0.id, $0) })
+        emitInstalled(current: current)
+        emitUninstalled(current: current)
+        emitEnabledChanges(current: current)
+        previousExtensions = current
+    }
+
+    private static func emitInstalled(current: [UUID: InstalledWebExtension]) {
+        for (id, value) in current where previousExtensions[id] == nil {
+            MozillaNativeAPIBridge.shared.emit(
+                namespace: "management",
+                event: "onInstalled",
+                arguments: [extensionInfo(value)]
+            )
+        }
+    }
+
+    private static func emitUninstalled(current: [UUID: InstalledWebExtension]) {
+        for (id, oldValue) in previousExtensions where current[id] == nil {
+            MozillaNativeAPIBridge.shared.emit(
+                namespace: "management",
+                event: "onUninstalled",
+                arguments: [extensionInfo(oldValue)]
+            )
+        }
+    }
+
+    private static func emitEnabledChanges(current: [UUID: InstalledWebExtension]) {
+        for (id, value) in current {
+            guard let oldValue = previousExtensions[id], oldValue.isEnabled != value.isEnabled else {
+                continue
+            }
+            MozillaNativeAPIBridge.shared.emit(
+                namespace: "management",
+                event: value.isEnabled ? "onEnabled" : "onDisabled",
+                arguments: [extensionInfo(value)]
+            )
         }
     }
 
@@ -204,7 +345,8 @@ enum MozillaManagementAPI {
         manager: ExtensionManager
     ) -> InstalledWebExtension? {
         manager.installedExtensions.first {
-            $0.runtimeIdentifier == identifier || $0.id.uuidString.caseInsensitiveCompare(identifier) == .orderedSame
+            $0.runtimeIdentifier == identifier ||
+                $0.id.uuidString.caseInsensitiveCompare(identifier) == .orderedSame
         }
     }
 
@@ -227,7 +369,15 @@ enum MozillaManagementAPI {
             "permissions": apiPermissions,
             "hostPermissions": Array(hostPermissions).sorted()
         ]
-        if !installed.isEnabled {
+        applyOptionalInfo(manifest: manifest, value: &value)
+        return value
+    }
+
+    private static func applyOptionalInfo(
+        manifest: [String: Any],
+        value: inout [String: Any]
+    ) {
+        if !((value["enabled"] as? Bool) ?? true) {
             value["disabledReason"] = "unknown"
         }
         if let shortName = manifest["short_name"] as? String {
@@ -245,15 +395,16 @@ enum MozillaManagementAPI {
         if let updateURL = updateURL(from: manifest) {
             value["updateUrl"] = updateURL
         }
-        if let icons = manifest["icons"] as? [String: Any] {
-            value["icons"] = icons.compactMap { size, path -> [String: Any]? in
-                guard let sizeValue = Int(size), let pathValue = path as? String else { return nil }
-                return ["size": sizeValue, "url": pathValue]
-            }.sorted { ($0["size"] as? Int ?? 0) < ($1["size"] as? Int ?? 0) }
-        } else {
-            value["icons"] = [[String: Any]]()
+        value["icons"] = extensionIcons(from: manifest)
+    }
+
+    private static func extensionIcons(from manifest: [String: Any]) -> [[String: Any]] {
+        guard let icons = manifest["icons"] as? [String: Any] else { return [] }
+        return icons.compactMap { size, path -> [String: Any]? in
+            guard let sizeValue = Int(size), let pathValue = path as? String else { return nil }
+            return ["size": sizeValue, "url": pathValue]
         }
-        return value
+        .sorted { ($0["size"] as? Int ?? 0) < ($1["size"] as? Int ?? 0) }
     }
 
     private static func manifest(for installed: InstalledWebExtension) -> [String: Any] {
@@ -288,14 +439,14 @@ enum MozillaManagementAPI {
         permissions: Set<String>,
         hostPermissions: Set<String>
     ) -> [String] {
-        var warnings: [String] = []
         let sensitivePermissions: Set<String> = [
-            "bookmarks", "browsingData", "clipboardRead", "clipboardWrite", "contextualIdentities",
-            "cookies", "downloads", "history", "management", "nativeMessaging", "notifications",
-            "privacy", "proxy", "tabs", "webNavigation", "webRequest", "webRequestBlocking"
+            "bookmarks", "browsingData", "clipboardRead", "clipboardWrite",
+            "contextualIdentities", "cookies", "downloads", "history", "management",
+            "nativeMessaging", "notifications", "privacy", "proxy", "tabs",
+            "webNavigation", "webRequest", "webRequestBlocking"
         ]
-        for permission in permissions.intersection(sensitivePermissions).sorted() {
-            warnings.append("Permission: \(permission)")
+        var warnings = permissions.intersection(sensitivePermissions).sorted().map {
+            "Permission: \($0)"
         }
         if !hostPermissions.isEmpty {
             warnings.append("Website access: \(hostPermissions.sorted().joined(separator: ", "))")
@@ -319,8 +470,12 @@ enum MozillaManagementAPI {
         manager: ExtensionManager
     ) async throws -> InstalledWebExtension {
         let (downloadedURL, response) = try await URLSession.shared.download(from: url)
-        guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
-            throw MozillaNativeAPIBridge.BridgeError.invalidArguments("The theme package could not be downloaded.")
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200..<300).contains(httpResponse.statusCode)
+        else {
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "The theme package could not be downloaded."
+            )
         }
 
         let data = try Data(contentsOf: downloadedURL)
@@ -343,12 +498,16 @@ enum MozillaManagementAPI {
         guard let archive = Archive(url: url, accessMode: .read),
               let entry = archive["manifest.json"]
         else {
-            throw MozillaNativeAPIBridge.BridgeError.invalidArguments("The downloaded XPI has no manifest.json.")
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "The downloaded XPI has no manifest.json."
+            )
         }
         var manifestData = Data()
         _ = try archive.extract(entry) { manifestData.append($0) }
         guard let manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any] else {
-            throw MozillaNativeAPIBridge.BridgeError.invalidArguments("The downloaded theme manifest is invalid.")
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "The downloaded theme manifest is invalid."
+            )
         }
         return manifest["theme"] != nil
     }
@@ -357,23 +516,30 @@ enum MozillaManagementAPI {
         guard let expectedHash, !expectedHash.isEmpty else { return }
         let components = expectedHash.split(separator: ":", maxSplits: 1).map(String.init)
         guard components.count == 2 else {
-            throw MozillaNativeAPIBridge.BridgeError.invalidArguments("The management.install hash is malformed.")
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "The management.install hash is malformed."
+            )
         }
-        let actual: String
-        switch components[0].lowercased() {
+        let actual = try digest(data: data, algorithm: components[0])
+        guard actual.caseInsensitiveCompare(components[1]) == .orderedSame else {
+            throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
+                "The downloaded theme hash does not match."
+            )
+        }
+    }
+
+    private static func digest(data: Data, algorithm: String) throws -> String {
+        switch algorithm.lowercased() {
         case "sha256":
-            actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         case "sha384":
-            actual = SHA384.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            return SHA384.hash(data: data).map { String(format: "%02x", $0) }.joined()
         case "sha512":
-            actual = SHA512.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            return SHA512.hash(data: data).map { String(format: "%02x", $0) }.joined()
         default:
             throw MozillaNativeAPIBridge.BridgeError.invalidArguments(
                 "Ora requires sha256, sha384, or sha512 for management.install verification."
             )
-        }
-        guard actual.caseInsensitiveCompare(components[1]) == .orderedSame else {
-            throw MozillaNativeAPIBridge.BridgeError.invalidArguments("The downloaded theme hash does not match.")
         }
     }
 
