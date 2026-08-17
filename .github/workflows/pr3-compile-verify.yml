@@ -24,7 +24,9 @@ jobs:
         run: xcodegen
 
       - name: Build
+        shell: bash
         run: |
+          set +e
           set -o pipefail
           xcodebuild \
             -project Ora.xcodeproj \
@@ -33,10 +35,25 @@ jobs:
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            build
+            build 2>&1 | tee build.log
+          build_status=${PIPESTATUS[0]}
+          if [ "$build_status" -ne 0 ]; then
+            grep -E '(^|: )[[:alnum:]_./ -]+\.swift:[0-9]+:[0-9]+: (error|warning):| error: ' build.log \
+              | grep -v 'warning:' \
+              | head -40 \
+              | while IFS= read -r line; do
+                  escaped=${line//'%'/'%25'}
+                  escaped=${escaped//$'\n'/'%0A'}
+                  escaped=${escaped//$'\r'/'%0D'}
+                  echo "::error title=Xcode compiler::${escaped}"
+                done
+            exit "$build_status"
+          fi
 
       - name: Test
+        shell: bash
         run: |
+          set +e
           set -o pipefail
           xcodebuild \
             -project Ora.xcodeproj \
@@ -45,4 +62,16 @@ jobs:
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            test
+            test 2>&1 | tee test.log
+          test_status=${PIPESTATUS[0]}
+          if [ "$test_status" -ne 0 ]; then
+            grep -E '(^|: )[[:alnum:]_./ -]+\.swift:[0-9]+:[0-9]+: (error|warning):| error: |failed|Failure' test.log \
+              | head -40 \
+              | while IFS= read -r line; do
+                  escaped=${line//'%'/'%25'}
+                  escaped=${escaped//$'\n'/'%0A'}
+                  escaped=${escaped//$'\r'/'%0D'}
+                  echo "::error title=Xcode tests::${escaped}"
+                done
+            exit "$test_status"
+          fi
