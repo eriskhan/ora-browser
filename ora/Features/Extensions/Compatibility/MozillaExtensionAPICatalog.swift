@@ -119,7 +119,11 @@ enum MozillaExtensionAPICatalog {
             .compatibilityLayer,
             notes: "Common pageAction operations map to action."
         ),
-        .init("permissions", .nativeWebKit),
+        .init(
+            "permissions",
+            .partial,
+            notes: "Keeps WebKit permission/origin handling and merges Ora prompts for Firefox-only native bridge permissions."
+        ),
         .init("pkcs11", .unsupported, notes: "Ora does not install or manage PKCS #11 modules."),
         .init(
             "privacy",
