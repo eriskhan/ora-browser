@@ -61,7 +61,7 @@ enum MozillaPermissionsAPI {
             for permission in requested {
                 manager.setBridgePermission(permission, granted: false, for: context)
             }
-            return true
+            return requested.isDisjoint(with: manager.grantedOriginalPermissions(for: context))
         default:
             throw MozillaNativeAPIBridge.BridgeError.unsupportedMethod("permissions", method)
         }
@@ -84,7 +84,7 @@ enum MozillaPermissionsAPI {
         for permission in permissions {
             manager.setBridgePermission(permission, granted: true, for: context)
         }
-        return true
+        return permissions.isSubset(of: manager.grantedOriginalPermissions(for: context))
     }
 
     private static func installedExtension(
@@ -105,9 +105,9 @@ enum MozillaPermissionsAPI {
     }
 
     private static func bridgePermissions(in permissions: Set<String>) -> Set<String> {
-        permissions.filter { permission in
+        Set(permissions.filter { permission in
             nativeBridgePermissions.contains(permission) && !isMatchPattern(permission)
-        }
+        })
     }
 
     private static func isMatchPattern(_ value: String) -> Bool {
