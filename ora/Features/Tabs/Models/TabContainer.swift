@@ -10,6 +10,9 @@ class TabContainer: ObservableObject, Identifiable {
     var emoji: String
     var createdAt: Date
     var lastAccessedAt: Date
+    var contextualColor: String = "blue"
+    var contextualIcon: String = "circle"
+    var contextualOrder: Int = 0
 
     @Relationship(deleteRule: .cascade) var tabs: [Tab] = []
     @Relationship(deleteRule: .cascade) var folders: [Folder] = []
@@ -19,7 +22,10 @@ class TabContainer: ObservableObject, Identifiable {
         id: UUID = UUID(),
         name: String = "Default",
         isActive: Bool = true,
-        emoji: String = "💩"
+        emoji: String = "💩",
+        contextualColor: String = "blue",
+        contextualIcon: String = "circle",
+        contextualOrder: Int = 0
     ) {
         let nowDate = Date()
         self.id = id
@@ -27,6 +33,9 @@ class TabContainer: ObservableObject, Identifiable {
         self.emoji = emoji
         self.createdAt = nowDate
         self.lastAccessedAt = nowDate
+        self.contextualColor = contextualColor
+        self.contextualIcon = contextualIcon
+        self.contextualOrder = contextualOrder
     }
 
     func reorderTabs(from: Tab, to: Tab) {
