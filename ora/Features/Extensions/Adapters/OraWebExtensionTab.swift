@@ -147,7 +147,7 @@ final class OraWebExtensionTab: NSObject, WKWebExtensionTab {
     }
 
     func zoomFactor(for context: WKWebExtensionContext) -> Double {
-        tab?.browserPage?.webExtensionWebView.pageZoom ?? 1
+        Double(tab?.browserPage?.webExtensionWebView.pageZoom ?? 1)
     }
 
     func setZoomFactor(
@@ -161,7 +161,7 @@ final class OraWebExtensionTab: NSObject, WKWebExtensionTab {
             completionHandler(extensionError("A positive finite zoom factor is required."))
             return
         }
-        webView.pageZoom = zoomFactor
+        webView.pageZoom = CGFloat(zoomFactor)
         context.webExtensionController?.didChangeTabProperties(.zoomFactor, for: self)
         completionHandler(nil)
     }
